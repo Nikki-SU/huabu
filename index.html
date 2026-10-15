@@ -391,8 +391,8 @@
   function clearGuides(){ guidesSvg.innerHTML=''; }
   function rectsOverlap(a,b,pad){ return !(a.x+a.w+pad<=b.x||b.x+b.w+pad<=a.x||a.y+a.h+pad<=b.y||b.y+b.h+pad<=a.y); }
   function placeAvoidOverlap(n){ const pad=40,step=40; let i=0; while(i++<200){ const a={x:n.x,y:n.y,w:n.w,h:nodeH(n)}; const hit=visibleNodes().some(o=>o.id!==n.id&&rectsOverlap(a,{x:o.x,y:o.y,w:o.w,h:nodeH(o)},pad)); if(!hit)break; n.y+=step; if(i%12===0){ n.y-=step*12; n.x+=n.w+pad; } } return n; }
-  /* ---------- 逻辑链等距：A-B-C 间距相近时，松手自动微调为等间距（无父子概念，按无向邻接） ---------- */
-  const CHAIN_TOL=48;
+  /* ---------- 逻辑链等距：松手一次，把所在整条直线链 A-B-C-D-E… 全部均化（无父子，按无向邻接） ---------- */
+  const CHAIN_TOL=80, CHAIN_MINGAP=16;
   function overlapY(a,b){ return Math.min(a.y+nodeH(a),b.y+nodeH(b))-Math.max(a.y,b.y); }
   function overlapX(a,b){ return Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x); }
   function evenOutChain(n){
@@ -401,24 +401,33 @@
     const adj={};
     edges().forEach(e=>{ if(!vis.has(e.from)||!vis.has(e.to)||e.from===e.to)return; (adj[e.from]=adj[e.from]||new Set()).add(e.to); (adj[e.to]=adj[e.to]||new Set()).add(e.from); });
     const nb=id=>[...(adj[id]||[])].map(byId).filter(Boolean);
-    const H=nodeH(n); let changed=false;
-    /* 水平链段 */
-    let left=null,right=null;
-    nb(n.id).forEach(o=>{ if(overlapY(n,o)<=2)return;
-      if(o.x+o.w/2<n.x+n.w/2){ if(!left||(o.x+o.w)>(left.x+left.w))left=o; }
-      else { if(!right||o.x<right.x)right=o; } });
-    if(left&&right){ const tx=((left.x+left.w)+right.x-n.w)/2; if(Math.abs(tx-n.x)<=CHAIN_TOL){n.x=tx;changed=true;} }
-    else if(left){ const l2=nb(left.id).filter(o=>o.id!==n.id&&overlapY(left,o)>2&&o.x+o.w/2<left.x+left.w/2).sort((a,b)=>(b.x+b.w)-(a.x+a.w))[0]; if(l2){const ref=left.x-(l2.x+l2.w); if(ref>0){const tx=left.x+left.w+ref; if(Math.abs(tx-n.x)<=CHAIN_TOL){n.x=tx;changed=true;}}} }
-    else if(right){ const r2=nb(right.id).filter(o=>o.id!==n.id&&overlapY(right,o)>2&&o.x+o.w/2>right.x+right.w/2).sort((a,b)=>a.x-b.x)[0]; if(r2){const ref=r2.x-(right.x+right.w); if(ref>0){const tx=right.x-n.w-ref; if(Math.abs(tx-n.x)<=CHAIN_TOL){n.x=tx;changed=true;}}} }
-    /* 垂直链段 */
-    let up=null,down=null;
-    nb(n.id).forEach(o=>{ if(overlapX(n,o)<=2)return;
-      if(o.y+nodeH(o)/2<n.y+H/2){ if(!up||(o.y+nodeH(o))>(up.y+nodeH(up)))up=o; }
-      else { if(!down||o.y<down.y)down=o; } });
-    if(up&&down){ const ty=((up.y+nodeH(up))+down.y-H)/2; if(Math.abs(ty-n.y)<=CHAIN_TOL){n.y=ty;changed=true;} }
-    else if(up){ const u2=nb(up.id).filter(o=>o.id!==n.id&&overlapX(up,o)>2&&o.y+nodeH(o)/2<up.y+nodeH(up)/2).sort((a,b)=>(b.y+nodeH(b))-(a.y+nodeH(a)))[0]; if(u2){const ref=up.y-(u2.y+nodeH(u2)); if(ref>0){const ty=up.y+nodeH(up)+ref; if(Math.abs(ty-n.y)<=CHAIN_TOL){n.y=ty;changed=true;}}} }
-    else if(down){ const d2=nb(down.id).filter(o=>o.id!==n.id&&overlapX(down,o)>2&&o.y+nodeH(o)/2>down.y+nodeH(down)/2).sort((a,b)=>a.y-b.y)[0]; if(d2){const ref=d2.y-(down.y+nodeH(down)); if(ref>0){const ty=down.y-H-ref; if(Math.abs(ty-n.y)<=CHAIN_TOL){n.y=ty;changed=true;}}} }
-    return changed;
+    /* 从 n 出发，沿“共线”邻接贪心延伸，取经过 n 的最长直线链段 */
+    function run(horiz){
+      const seen=new Set([n.id]); const back=[]; let cur=n;
+      const backOk=(o,c)=>horiz?(overlapY(c,o)>2 && o.x+o.w/2<c.x+c.w/2):(overlapX(c,o)>2 && o.y+nodeH(o)/2<c.y+nodeH(c)/2);
+      const fwdOk=(o,c)=>horiz?(overlapY(c,o)>2 && o.x+o.w/2>c.x+c.w/2):(overlapX(c,o)>2 && o.y+nodeH(o)/2>c.y+nodeH(c)/2);
+      const pick=(o,c,best)=>horiz?(!best||(o.x+o.w)>(best.x+best.w)):(!best||(o.y+nodeH(o))>(best.y+nodeH(best)));
+      const pickF=(o,c,best)=>horiz?(!best||o.x<best.x):(!best||o.y<best.y);
+      while(true){ let next=null; nb(cur.id).forEach(o=>{ if(seen.has(o.id)||!backOk(o,cur))return; if(!next||pick(o,cur,next))next=o; }); if(!next)break; seen.add(next.id); back.push(next); cur=next; }
+      const fwd=[]; cur=n;
+      while(true){ let next=null; nb(cur.id).forEach(o=>{ if(seen.has(o.id)||!fwdOk(o,cur))return; if(!next||pickF(o,cur,next))next=o; }); if(!next)break; seen.add(next.id); fwd.push(next); cur=next; }
+      return back.reverse().concat([n],fwd);
+    }
+    function spread(arr,horiz){
+      if(arr.length<3)return false;
+      const pos=a=>horiz?a.x:a.y, size=a=>horiz?a.w:nodeH(a);
+      const gaps=[]; for(let i=0;i<arr.length-1;i++){ const g=pos(arr[i+1])-(pos(arr[i])+size(arr[i])); gaps.push(g); if(g<-6)return false; }
+      const gmax=Math.max.apply(null,gaps),gmin=Math.min.apply(null,gaps);
+      if(gmax-gmin>CHAIN_TOL)return false;            /* 间距差异明显＝刻意为之，不动 */
+      const start=pos(arr[0]), total=arr.reduce((s,a)=>s+size(a),0);
+      const span=(pos(arr[arr.length-1])+size(arr[arr.length-1]))-start;
+      let gap=(span-total)/(arr.length-1); if(!(gap>=CHAIN_MINGAP))gap=CHAIN_MINGAP;
+      let cur=start; arr.forEach(a=>{ if(horiz)a.x=cur; else a.y=cur; cur+=size(a)+gap; });
+      return true;
+    }
+    const rh=run(true), rv=run(false);
+    if(rh.length>=rv.length)return spread(rh,true);
+    return spread(rv,false);
   }
 
   /* ---------- 一键整理布局（思维导图式排版：同级同行对齐·同级等宽·父节点居中·等距） ---------- */
