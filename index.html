@@ -468,7 +468,27 @@
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   function flashHint(t){hint.textContent=t;}
   function logicOnly(){return{nodes:nodes().filter(n=>n.type==='logic'),edges:edges().filter(e=>byId(e.from)?.type==='logic'&&byId(e.to)?.type==='logic')};}
-  function exportChain(fmt){const o=logicOnly();if(fmt==='md'){let md='# 逻辑链\n\n## 逻辑点\n';o.nodes.forEach(n=>{md+='- ['+n.id+'] '+(n.title||n.text||'(未命名)')+'\n';});md+='\n## 关系\n';o.edges.forEach(e=>{const a=byId(e.from),c=byId(e.to);md+='- '+a.id+' → '+c.id+(e.label?'（'+e.label+'）':'')+'\n';});downloadText(md,doc().name+'-逻辑链.md','text/markdown');}else{downloadText(JSON.stringify({nodes:o.nodes,edges:o.edges},null,2),doc().name+'-逻辑链.json','application/json');}flashHint('已导出逻辑链');}
+  function numId(id){ return parseInt(String(id).replace(/\D/g,''))||0; }
+  function exportChain(fmt){const o=logicOnly();if(fmt==='md'){
+    const ns=o.nodes.slice().sort((a,b)=>numId(a.id)-numId(b.id));
+    const clean=s=>String(s==null?'':s).replace(/\r?\n/g,' ').replace(/\|/g,'｜').trim();
+    let md='# 逻辑链\n\n## 1. 节点（标题 - 内容）\n';
+    ns.forEach((n,i)=>{ md+=(i+1)+'. '+clean(n.title||'(无标题)')+(n.text?(' - '+clean(n.text)):'')+'\n'; });
+    md+='\n## 2. 邻接矩阵\n';
+    md+='单元格格式 `A_B`：A 表示该行与该列两个节点的有向关系，`1`=行指向列，`-1`=列指向行，`0`=无向连线；B 为连线文字；空白=两者没有连线。行列编号与上一节一致。\n\n';
+    const N=ns.length;
+    let head='|   |';for(let j=0;j<N;j++)head+=' '+(j+1)+' |';md+=head+'\n';
+    let sep='|---|';for(let j=0;j<N;j++)sep+='---|';md+=sep+'\n';
+    for(let i=0;i<N;i++){ let row='| '+ (i+1) +' |';
+      for(let j=0;j<N;j++){ let v='';
+        if(i===j){ v='·'; }
+        else { const parts=o.edges.filter(e=>(e.from===ns[i].id&&e.to===ns[j].id)||(e.from===ns[j].id&&e.to===ns[i].id)).map(e=>{ let a; if(!e.directed)a=0; else if(e.from===ns[i].id)a=1; else a=-1; return a+'_'+(e.label||''); }); v=parts.length?clean(parts.join(' / ')):''; }
+        row+=' '+v+' |';
+      }
+      md+=row+'\n';
+    }
+    downloadText(md,doc().name+'-逻辑链.md','text/markdown');
+   }else{downloadText(JSON.stringify({nodes:o.nodes,edges:o.edges},null,2),doc().name+'-逻辑链.json','application/json');}flashHint('已导出逻辑链');}
   function downloadText(txt,name,type){const b=new Blob([txt],{type});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();}
   function bounds(){let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;nodes().forEach(n=>{if(S.onlyLogic&&n.type!=='logic')return;minX=Math.min(minX,n.x);minY=Math.min(minY,n.y);maxX=Math.max(maxX,n.x+n.w);maxY=Math.max(maxY,n.y+nodeH(n));});if(!nodes().length)return{x:0,y:0,w:400,h:300};return{x:minX,y:minY,w:maxX-minX,h:maxY-minY};}
   function exportJPG(){const b=bounds(),pad=60,scale=Math.min(2,2400/Math.max(b.w,b.h));const W=Math.round(b.w*scale+pad*2),H=Math.round(b.h*scale+pad*2);const cv=document.createElement('canvas');cv.width=W;cv.height=H;const ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);ctx.save();ctx.translate(pad-b.x*scale,pad-b.y*scale);ctx.scale(scale,scale);edges().forEach(e=>{const a=byId(e.from),c=byId(e.to);if(!a||!c)return;if(S.onlyLogic&&(a.type!=='logic'||c.type!=='logic'))return;const p1=portPos(a,e.fromPort),p2=portPos(c,e.toPort);const mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2-40;ctx.strokeStyle='#5a6472';ctx.lineWidth=1.8/scale;ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.quadraticCurveTo(mx,my,p2.x,p2.y);ctx.stroke();if(e.directed){const t=Math.atan2(p2.y-my,p2.x-mx),s=9;ctx.fillStyle='#fff';ctx.strokeStyle='#333';ctx.lineWidth=1.4/scale;ctx.beginPath();ctx.moveTo(p2.x,p2.y);ctx.lineTo(p2.x-s*Math.cos(t-0.45),p2.y-s*Math.sin(t-0.45));ctx.lineTo(p2.x-s*Math.cos(t+0.45),p2.y-s*Math.sin(t+0.45));ctx.closePath();ctx.fill();ctx.stroke();}if(e.label){ctx.font='13px "LXGW WenKai","KaiTi",serif';ctx.fillStyle='#333';ctx.textAlign='center';ctx.fillText(e.label,mx,my-6);}});nodes().forEach(n=>{if(S.onlyLogic&&n.type!=='logic')return;const col=n.type==='logic'?'#4F46E5':n.type==='event'?'#059669':'#EA580C';ctx.fillStyle=col;ctx.strokeStyle=col;ctx.lineWidth=3/scale;roundRect(ctx,n.x,n.y,n.w,nodeH(n),8);ctx.fill();ctx.stroke();ctx.fillStyle='#fff';ctx.font='bold 14px "LXGW WenKai","KaiTi",serif';ctx.textAlign='left';if(n.title)ctx.fillText(n.title,n.x+8,n.y+18);if(!n.collapsed&&n.text){ctx.font='14px "LXGW WenKai","KaiTi",serif';wrapText(ctx,n.text,n.x+8,n.y+36,n.w-16,18);}});ctx.restore();const a=document.createElement('a');a.href=cv.toDataURL('image/jpeg',0.9);a.download=doc().name+'.jpg';a.click();flashHint('已导出 JPG');}
