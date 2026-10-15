@@ -342,7 +342,7 @@
   function onResizeDown(e,n,el){ if(e.button!==0)return; setSelection(n.id); drag={kind:'resize',id:n.id,sx:e.clientX,sy:e.clientY,ow:n.w,oh:n.h,_p:true}; pushHistory(); e.preventDefault(); e.stopPropagation(); }
   viewport.addEventListener('pointerdown',e=>{ if(e.target===viewport||e.target===world||e.target===gridSvg){moved=false;drag={kind:'pan',sx:e.clientX,sy:e.clientY,ox:S.panX,oy:S.panY};e.preventDefault();} });
   window.addEventListener('pointermove',e=>{ lastMouseX=e.clientX;lastMouseY=e.clientY; if(ghostType||ghostPayload){if(ghost._sx==null){ghost._sx=e.clientX;ghost._sy=e.clientY;}if(Math.abs(e.clientX-ghost._sx)+Math.abs(e.clientY-ghost._sy)>3)moved=true;ghost.style.left=e.clientX+'px';ghost.style.top=e.clientY+'px';} if(connecting){updateTempLine(clientToWorld(e.clientX,e.clientY));} if(edgeDrag){const nid=edgeDrag.side==='from'?edgeDrag.edge.from:edgeDrag.edge.to;setSelection(nid);return;} if(!drag)return; const dx=e.clientX-drag.sx,dy=e.clientY-drag.sy; if(Math.abs(dx)+Math.abs(dy)>3)moved=true; if(!moved)return; if(drag.kind==='node'){if(!drag._p){pushHistory();drag._p=true;}const n=byId(drag.id);const rawX=drag.ox+dx/S.zoom,rawY=drag.oy+dy/S.zoom;n.x=rawX;n.y=rawY;let smarted=false;if(S.snapOn){const sn=snapAlign(n);const eq=snapEqualGap(n);smarted=Math.abs(n.x-rawX)>0.01||Math.abs(n.y-rawY)>0.01;renderGuides(n,sn,eq);}if(!smarted){if(S.snapOn)clearGuides();if(S.gridSnap){n.x=snapV(rawX);n.y=snapV(rawY);}}const el=nodeEl(n.id);if(el){el.style.left=n.x+'px';el.style.top=n.y+'px';}renderEdges();} else if(drag.kind==='resize'){const n=byId(drag.id);let nw=Math.max(80,drag.ow+dx/S.zoom),nh=Math.max(40,drag.oh+dy/S.zoom);if(S.gridSnap){nw=snapV(nw);nh=snapV(nh);}n.w=nw;n.h=nh;const el=nodeEl(n.id);if(el){el.style.width=n.w+'px';if(!n.collapsed)el.style.height=n.h+'px';}renderEdges();} else if(drag.kind==='pan'){S.panX=drag.ox+dx;S.panY=drag.oy+dy;applyTransform();} });
-  window.addEventListener('pointerup',e=>{ if(ghostType){const type=ghost._type;ghostType=null;ghost.style.display='none';if(moved){const p=clientToWorld(e.clientX,e.clientY);addNode(type,p.x-S.defW/2,p.y-8);}ghost._sx=null;} if(ghostPayload){const c=ghost._c;ghostPayload=null;ghost.style.display='none';if(moved){const p=clientToWorld(e.clientX,e.clientY);let nx=p.x-S.defW/2,ny=p.y-8;if(S.gridSnap){nx=snapV(nx);ny=snapV(ny);}pushHistory();const n={id:'n'+S.seq,type:c.type,title:c.title,text:c.text,collapsed:false,x:nx,y:ny,w:S.defW,h:S.defH};S.seq++;nodes().push(n);placeAvoidOverlap(n);renderAll();}ghost._sx=null;} if(drag&&(drag.kind==='node'||drag.kind==='resize')){const el=nodeEl(drag.id);if(el)el.classList.remove('dragging');} clearGuides(); if(S.snapOn&&drag&&drag.kind==='node'&&moved){autoEvenSiblings(drag.id);renderAll();} drag=null; });
+  window.addEventListener('pointerup',e=>{ if(ghostType){const type=ghost._type;ghostType=null;ghost.style.display='none';if(moved){const p=clientToWorld(e.clientX,e.clientY);addNode(type,p.x-S.defW/2,p.y-8);}ghost._sx=null;} if(ghostPayload){const c=ghost._c;ghostPayload=null;ghost.style.display='none';if(moved){const p=clientToWorld(e.clientX,e.clientY);let nx=p.x-S.defW/2,ny=p.y-8;if(S.gridSnap){nx=snapV(nx);ny=snapV(ny);}pushHistory();const n={id:'n'+S.seq,type:c.type,title:c.title,text:c.text,collapsed:false,x:nx,y:ny,w:S.defW,h:S.defH};S.seq++;nodes().push(n);placeAvoidOverlap(n);renderAll();}ghost._sx=null;} if(drag&&(drag.kind==='node'||drag.kind==='resize')){const el=nodeEl(drag.id);if(el)el.classList.remove('dragging');} clearGuides(); if(drag&&drag.kind==='node'&&moved){evenOutChain(byId(drag.id));renderAll();} drag=null; });
 
   /* 连线 */
   function clientToWorld(cx,cy){const r=viewport.getBoundingClientRect();return{x:(cx-r.left-S.panX)/S.zoom,y:(cy-r.top-S.panY)/S.zoom};}
@@ -389,10 +389,37 @@
     if(eq&&eq.h){ const {left,right,gapL,gapR}=eq.h; const y=Math.min(left.y,right.y,n.y)-18/S.zoom; dimX(left.x+left.w,n.x,y); dimX(n.x+n.w,right.x,y); guideText((left.x+left.w+n.x)/2,y-4/S.zoom,gapL+''); guideText((n.x+n.w+right.x)/2,y-4/S.zoom,gapR+''); }
     if(eq&&eq.v){ const {up,down,gapU,gapD}=eq.v; const x=Math.min(up.x,down.x,n.x)-18/S.zoom; dimY(up.y+nodeH(up),n.y,x); dimY(n.y+nodeH(n),down.y,x); guideText(x-4/S.zoom,((up.y+nodeH(up))+n.y)/2+4/S.zoom,gapU+''); guideText(x-4/S.zoom,(n.y+nodeH(n)+down.y)/2+4/S.zoom,gapD+''); } }
   function clearGuides(){ guidesSvg.innerHTML=''; }
-  const MIN_GAP=28;
   function rectsOverlap(a,b,pad){ return !(a.x+a.w+pad<=b.x||b.x+b.w+pad<=a.x||a.y+a.h+pad<=b.y||b.y+b.h+pad<=a.y); }
   function placeAvoidOverlap(n){ const pad=40,step=40; let i=0; while(i++<200){ const a={x:n.x,y:n.y,w:n.w,h:nodeH(n)}; const hit=visibleNodes().some(o=>o.id!==n.id&&rectsOverlap(a,{x:o.x,y:o.y,w:o.w,h:nodeH(o)},pad)); if(!hit)break; n.y+=step; if(i%12===0){ n.y-=step*12; n.x+=n.w+pad; } } return n; }
-  function autoEvenSiblings(id){ const parents=edges().filter(e=>e.to===id).map(e=>e.from); const done=new Set(); parents.forEach(p=>{ if(done.has(p))return; done.add(p); const kids=edges().filter(e=>e.from===p).map(e=>byId(e.to)).filter(Boolean); const uniq=[],seen=new Set(); kids.forEach(k=>{ if(!seen.has(k.id)){seen.add(k.id);uniq.push(k);} }); if(uniq.length<2)return; const xs=uniq.map(k=>k.x+k.w/2),ys=uniq.map(k=>k.y+nodeH(k)/2); const rx=Math.max(...xs)-Math.min(...xs),ry=Math.max(...ys)-Math.min(...ys); if(rx>=ry){ uniq.sort((a,b)=>(a.x+a.w/2)-(b.x+b.w/2)); const first=uniq[0],last=uniq[uniq.length-1]; const span=(last.x+last.w)-first.x,totalW=uniq.reduce((s,k)=>s+k.w,0); let gap=(span-totalW)/(uniq.length-1); if(!(gap>=MIN_GAP))gap=MIN_GAP; let cur=first.x; uniq.forEach(k=>{k.x=cur;cur+=k.w+gap;}); } else { uniq.sort((a,b)=>(a.y+nodeH(a)/2)-(b.y+nodeH(b)/2)); const first=uniq[0],last=uniq[uniq.length-1]; const span=(last.y+nodeH(last))-first.y,totalH=uniq.reduce((s,k)=>s+nodeH(k),0); let gap=(span-totalH)/(uniq.length-1); if(!(gap>=MIN_GAP))gap=MIN_GAP; let cur=first.y; uniq.forEach(k=>{k.y=cur;cur+=nodeH(k)+gap;}); } }); }
+  /* ---------- 逻辑链等距：A-B-C 间距相近时，松手自动微调为等间距（无父子概念，按无向邻接） ---------- */
+  const CHAIN_TOL=48;
+  function overlapY(a,b){ return Math.min(a.y+nodeH(a),b.y+nodeH(b))-Math.max(a.y,b.y); }
+  function overlapX(a,b){ return Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x); }
+  function evenOutChain(n){
+    if(!n)return false;
+    const vis=new Set(visibleNodes().map(o=>o.id));
+    const adj={};
+    edges().forEach(e=>{ if(!vis.has(e.from)||!vis.has(e.to)||e.from===e.to)return; (adj[e.from]=adj[e.from]||new Set()).add(e.to); (adj[e.to]=adj[e.to]||new Set()).add(e.from); });
+    const nb=id=>[...(adj[id]||[])].map(byId).filter(Boolean);
+    const H=nodeH(n); let changed=false;
+    /* 水平链段 */
+    let left=null,right=null;
+    nb(n.id).forEach(o=>{ if(overlapY(n,o)<=2)return;
+      if(o.x+o.w/2<n.x+n.w/2){ if(!left||(o.x+o.w)>(left.x+left.w))left=o; }
+      else { if(!right||o.x<right.x)right=o; } });
+    if(left&&right){ const tx=((left.x+left.w)+right.x-n.w)/2; if(Math.abs(tx-n.x)<=CHAIN_TOL){n.x=tx;changed=true;} }
+    else if(left){ const l2=nb(left.id).filter(o=>o.id!==n.id&&overlapY(left,o)>2&&o.x+o.w/2<left.x+left.w/2).sort((a,b)=>(b.x+b.w)-(a.x+a.w))[0]; if(l2){const ref=left.x-(l2.x+l2.w); if(ref>0){const tx=left.x+left.w+ref; if(Math.abs(tx-n.x)<=CHAIN_TOL){n.x=tx;changed=true;}}} }
+    else if(right){ const r2=nb(right.id).filter(o=>o.id!==n.id&&overlapY(right,o)>2&&o.x+o.w/2>right.x+right.w/2).sort((a,b)=>a.x-b.x)[0]; if(r2){const ref=r2.x-(right.x+right.w); if(ref>0){const tx=right.x-n.w-ref; if(Math.abs(tx-n.x)<=CHAIN_TOL){n.x=tx;changed=true;}}} }
+    /* 垂直链段 */
+    let up=null,down=null;
+    nb(n.id).forEach(o=>{ if(overlapX(n,o)<=2)return;
+      if(o.y+nodeH(o)/2<n.y+H/2){ if(!up||(o.y+nodeH(o))>(up.y+nodeH(up)))up=o; }
+      else { if(!down||o.y<down.y)down=o; } });
+    if(up&&down){ const ty=((up.y+nodeH(up))+down.y-H)/2; if(Math.abs(ty-n.y)<=CHAIN_TOL){n.y=ty;changed=true;} }
+    else if(up){ const u2=nb(up.id).filter(o=>o.id!==n.id&&overlapX(up,o)>2&&o.y+nodeH(o)/2<up.y+nodeH(up)/2).sort((a,b)=>(b.y+nodeH(b))-(a.y+nodeH(a)))[0]; if(u2){const ref=up.y-(u2.y+nodeH(u2)); if(ref>0){const ty=up.y+nodeH(up)+ref; if(Math.abs(ty-n.y)<=CHAIN_TOL){n.y=ty;changed=true;}}} }
+    else if(down){ const d2=nb(down.id).filter(o=>o.id!==n.id&&overlapX(down,o)>2&&o.y+nodeH(o)/2>down.y+nodeH(down)/2).sort((a,b)=>a.y-b.y)[0]; if(d2){const ref=d2.y-(down.y+nodeH(down)); if(ref>0){const ty=down.y-H-ref; if(Math.abs(ty-n.y)<=CHAIN_TOL){n.y=ty;changed=true;}}} }
+    return changed;
+  }
 
   /* ---------- 一键整理布局（思维导图式排版：同级同行对齐·同级等宽·父节点居中·等距） ---------- */
   const H_GAP=42, V_GAP=64;
