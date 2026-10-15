@@ -318,7 +318,7 @@
   function startGhostBtn(e,type){ ghostType=type;moved=false;ghostPayload=null;ghost.style.display='block';ghost.style.background=COL[type];ghost.textContent=TYPES[type];ghost.style.left=e.clientX+'px';ghost.style.top=e.clientY+'px';ghost._type=type;e.preventDefault(); }
   document.getElementById('only-logic').onclick=function(){S.onlyLogic=!S.onlyLogic;this.classList.toggle('active',S.onlyLogic);renderAll();scheduleSave();};
   document.getElementById('undirected').onclick=function(){S.undirectedMode=!S.undirectedMode;this.classList.toggle('on',S.undirectedMode);this.innerHTML=iconSvg(S.undirectedMode?'biline':'arrow');scheduleSave();};
-  document.getElementById('tidy-layout').onclick=tidyLayout;
+  document.getElementById('tidy-layout').onclick=function(){this.classList.add('on');const b=this;setTimeout(()=>b.classList.remove('on'),300);tidyLayout();};
   document.getElementById('snap-toggle').onclick=function(){S.snapOn=!S.snapOn;this.classList.toggle('on',S.snapOn);flashHint(S.snapOn?'已开启智能吸附':'已关闭智能吸附（自由摆放）');scheduleSave();};
   document.getElementById('grid-snap').onclick=function(){S.gridSnap=!S.gridSnap;this.classList.toggle('on',S.gridSnap);flashHint(S.gridSnap?'已开启网格吸附':'已关闭网格吸附');scheduleSave();};
   document.getElementById('lib').onclick=function(){S.showSidebar=!S.showSidebar;sidebar.classList.toggle('hidden',!S.showSidebar);viewport.classList.toggle('full',!S.showSidebar);addLegend.style.left=(S.showSidebar?'272px':'12px');this.classList.toggle('active',S.showSidebar);renderGrid();setTimeout(renderEdges,50);scheduleSave();};
