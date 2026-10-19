@@ -60,6 +60,11 @@
   #viewport.full{left:0;}
   #world{position:absolute;top:0;left:0;transform-origin:0 0;}
   #grid{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;}
+  body.connect-mode #viewport{cursor:crosshair;}
+  body.connect-mode .node{cursor:crosshair !important;}
+  body.connect-mode .node .port,body.connect-mode .node .resize{display:none !important;}
+  body.connect-mode .node:hover{box-shadow:0 0 0 2px #4F46E5;}
+  body.connect-mode .node.link-src,body.connect-mode .node.link-src:hover{box-shadow:0 0 0 2.5px #e11d48;}
   #edges{position:absolute;top:0;left:0;overflow:visible;z-index:1;}
   #nodes{position:absolute;top:0;left:0;z-index:2;}
   #guides{position:absolute;top:0;left:0;overflow:visible;pointer-events:none;z-index:3;}
@@ -125,6 +130,7 @@
   <button class="btn" id="lib" data-group="view" title="组件库">ICON(sidebar)</button>
   <button class="btn" id="only-logic" data-group="view" title="只看逻辑链">ICON(filter)</button>
   <button class="btn" id="undirected" data-group="view" title="无向/有向线开关">ICON(biline)</button>
+  <button class="btn" id="connect-mode" data-group="view" title="连线模式：开启后依次点两个框即自动连线（有向/无向跟随左侧开关，自动选最美观的出线侧），Esc 取消">ICON(connect)</button>
   <button class="btn" id="export-chain-md" data-group="view" title="导逻辑链(单击md/双击json)">ICON(upload)</button>
   <button class="btn" id="tidy-layout" data-group="view" title="整理布局（同级同行对齐·同级等宽·父节点居中·等距）">ICON(layout)</button>
   <button class="btn on" id="snap-toggle" data-group="view" title="智能吸附（拖动时显示对齐提示；关闭则自由摆放）">ICON(magnet)</button>
@@ -176,7 +182,7 @@
 
 <script>
 (function(){
-  const S={docs:[],active:0,seq:1,zoom:1,panX:0,panY:0,onlyLogic:false,undirectedMode:false,selection:null,selectedEdge:null,defW:160,defH:90,extra:[],libSearch:'',showSidebar:true,libTab:'logic',snapOn:true,gridSnap:true};
+  const S={docs:[],active:0,seq:1,zoom:1,panX:0,panY:0,onlyLogic:false,undirectedMode:false,selection:null,selectedEdge:null,defW:160,defH:90,extra:[],libSearch:'',showSidebar:true,libTab:'logic',snapOn:true,gridSnap:true,connectMode:false};
   const TYPES={logic:'逻辑',event:'事件',theory:'理论'};
   const COL={logic:'#4F46E5',event:'#059669',theory:'#EA580C'};
   function doc(){return S.docs[S.active];} function nodes(){return doc().nodes;} function edges(){return doc().edges;}
@@ -204,7 +210,8 @@
     filedown:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><polyline points="9 15 12 18 15 15"/>',
     layout:'<rect x="9" y="3" width="6" height="5" rx="1.5"/><rect x="2" y="16" width="6" height="5" rx="1.5"/><rect x="16" y="16" width="6" height="5" rx="1.5"/><path d="M12 8v4M5 16v-2h14v2"/>',
     magnet:'<path d="M7 3v8a5 5 0 0 0 10 0V3"/><line x1="7" y1="8" x2="11" y2="8"/><line x1="13" y1="8" x2="17" y2="8"/>',
-    gridsnap:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>'
+    gridsnap:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>',
+    connect:'<circle cx="5.5" cy="12" r="3"/><circle cx="18.5" cy="12" r="3"/><path d="M8.5 12h7"/><path d="M13.5 8.5L17 12l-3.5 3.5"/>'
   };
   function iconSvg(name){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+ICONS[name]+'</svg>'; }
   document.querySelectorAll('#toolbar .btn').forEach(b=>{
@@ -214,7 +221,7 @@
   });
   document.getElementById('undirected').innerHTML = iconSvg('arrow'); // 默认有向箭头
 
-  let connecting=null,tempLine=null,drag=null,edgeDrag=null,moved=false,ghostType=null,ghostPayload=null,lastMouseX=null,lastMouseY=null;
+  let connecting=null,tempLine=null,drag=null,edgeDrag=null,moved=false,ghostType=null,ghostPayload=null,lastMouseX=null,lastMouseY=null,linkFirst=null;
 
   /* ---------- 文档 / 文件 ---------- */
   function newDoc(name){ S.docs.push({id:Date.now()+'',name:name||('大纲'+(S.docs.length+1)),handle:null,dirty:false,nodes:[],edges:[],undoStack:[],redoStack:[]}); S.active=S.docs.length-1; S.selection=null; renderTabs();renderAll();renderLib(); scheduleSave(); return doc(); }
@@ -238,14 +245,14 @@
     docs:S.docs.map(d=>({id:d.id,name:d.name,nodes:d.nodes,edges:d.edges})),
     extra:S.extra, active:S.active, seq:S.seq, zoom:S.zoom, panX:S.panX, panY:S.panY,
     onlyLogic:S.onlyLogic, undirectedMode:S.undirectedMode, defW:S.defW, defH:S.defH,
-    showSidebar:S.showSidebar, libTab:S.libTab, libSearch:S.libSearch, snapOn:S.snapOn, gridSnap:S.gridSnap },null,2); }
+    showSidebar:S.showSidebar, libTab:S.libTab, libSearch:S.libSearch, snapOn:S.snapOn, gridSnap:S.gridSnap, connectMode:S.connectMode },null,2); }
 
   function restoreWorkspace(data){ if(!data||!data.docs||!data.docs.length)return false;
     S.docs=data.docs.map(x=>({id:x.id||Date.now()+'',name:x.name||'大纲',handle:null,dirty:false,nodes:(x.nodes||[]).map(normalizeNode),edges:x.edges||[],undoStack:[],redoStack:[]}));
     S.extra=(data.extra||[]).slice();
     S.active=Math.min(Math.max(0,data.active|0),S.docs.length-1);
     S.seq=data.seq||1; S.zoom=data.zoom||1; S.panX=data.panX||0; S.panY=data.panY||0;
-    S.onlyLogic=!!data.onlyLogic; S.undirectedMode=!!data.undirectedMode; S.snapOn=data.snapOn!==false; S.gridSnap=data.gridSnap!==false;
+    S.onlyLogic=!!data.onlyLogic; S.undirectedMode=!!data.undirectedMode; S.snapOn=data.snapOn!==false; S.gridSnap=data.gridSnap!==false; S.connectMode=!!data.connectMode;
     S.defW=data.defW||160; S.defH=data.defH||90;
     S.showSidebar=data.showSidebar!==false; S.libTab=data.libTab||'logic'; S.libSearch=data.libSearch||'';
     S.selection=null; S.selectedEdge=null;
@@ -256,6 +263,8 @@
     document.getElementById('lib').classList.toggle('active',S.showSidebar);
     document.getElementById('snap-toggle').classList.toggle('on',S.snapOn);
     document.getElementById('grid-snap').classList.toggle('on',S.gridSnap);
+    document.getElementById('connect-mode').classList.toggle('on',S.connectMode);
+    document.body.classList.toggle('connect-mode',S.connectMode);
     document.getElementById('def-w').value=S.defW; document.getElementById('def-h').value=S.defH;
     document.getElementById('lib-search').value=S.libSearch;
     renderTabs(); applyTransform(); renderLib(); renderAll();
@@ -321,6 +330,7 @@
   document.getElementById('tidy-layout').onclick=function(){this.classList.add('on');const b=this;setTimeout(()=>b.classList.remove('on'),300);tidyLayout();};
   document.getElementById('snap-toggle').onclick=function(){S.snapOn=!S.snapOn;this.classList.toggle('on',S.snapOn);flashHint(S.snapOn?'已开启智能吸附':'已关闭智能吸附（自由摆放）');scheduleSave();};
   document.getElementById('grid-snap').onclick=function(){S.gridSnap=!S.gridSnap;this.classList.toggle('on',S.gridSnap);flashHint(S.gridSnap?'已开启网格吸附':'已关闭网格吸附');scheduleSave();};
+  document.getElementById('connect-mode').onclick=function(){setConnectMode(!S.connectMode);};
   document.getElementById('lib').onclick=function(){S.showSidebar=!S.showSidebar;sidebar.classList.toggle('hidden',!S.showSidebar);viewport.classList.toggle('full',!S.showSidebar);addLegend.style.left=(S.showSidebar?'272px':'12px');this.classList.toggle('active',S.showSidebar);renderGrid();setTimeout(renderEdges,50);scheduleSave();};
   document.getElementById('zoom-in').onclick=()=>setZoom(S.zoom*1.2); document.getElementById('zoom-out').onclick=()=>setZoom(S.zoom/1.2); document.getElementById('zoom-reset').onclick=()=>{S.zoom=1;S.panX=0;S.panY=0;applyTransform();};
   document.getElementById('export-jpg').onclick=exportJPG;
@@ -336,11 +346,15 @@
   function byId(id){return nodes().find(n=>n.id===id);} function nodeEl(id){return document.querySelector('.node[data-id="'+id+'"]');}
   function renderAll(){renderNodes();renderEdges();}
   function setSelection(id){S.selection=id;document.querySelectorAll('.node').forEach(el=>el.classList.toggle('selected',el.dataset.id===id));}
-  function renderNodes(){ nodesEl.innerHTML=''; nodes().forEach(n=>{ if(S.onlyLogic&&n.type!=='logic')return; const el=document.createElement('div');el.className='node'+(n.collapsed?' collapsed':'')+(S.selection===n.id?' selected':'');el.dataset.id=n.id;el.dataset.type=n.type;el.style.left=n.x+'px';el.style.top=n.y+'px';el.style.width=n.w+'px'; const tb=document.createElement('div');tb.className='titlebar';tb.innerHTML='<span class="grip">⠿</span><span class="fold">'+(n.collapsed?'▸':'▾')+'</span>'; const ti=document.createElement('span');ti.className='ntitle';ti.contentEditable='true';ti.spellcheck=false;ti.textContent=n.title||'';tb.appendChild(ti); const bo=document.createElement('div');bo.className='nbody';bo.contentEditable='true';bo.spellcheck=false;bo.textContent=n.text||''; const rz=document.createElement('div');rz.className='resize';rz.title='调大小'; el.appendChild(tb);el.appendChild(bo);el.appendChild(rz);nodesEl.appendChild(el); if(!n.collapsed)n.h=el.offsetHeight||n.h; n.w=el.offsetWidth||n.w; ['top','right','bottom','left'].forEach(p=>{const port=document.createElement('span');port.className='port p-'+p;port.dataset.port=p;port.addEventListener('pointerdown',e=>{e.stopPropagation();startConnect(e,n,p);});port.addEventListener('pointerup',e=>{e.stopPropagation();endConnectOnPort(e,n,p);});el.appendChild(port);}); ti.addEventListener('input',()=>{n.title=ti.innerText.replace(/\u00a0/g,' ').trim()===''?'':ti.innerText;markDirty();renderLib();}); bo.addEventListener('input',()=>{n.text=bo.innerText.replace(/\u00a0/g,' ').trim()===''?'':bo.innerText;if(!n.collapsed)n.h=el.offsetHeight||n.h;markDirty();renderLib();renderEdges();}); tb.querySelector('.grip').addEventListener('pointerdown',e=>onNodeDown(e,n,el)); tb.querySelector('.fold').addEventListener('click',e=>{e.stopPropagation();n.collapsed=!n.collapsed;markDirty();renderAll();}); rz.addEventListener('pointerdown',e=>onResizeDown(e,n,el)); el.addEventListener('dblclick',e=>{if(e.target.classList.contains('port')||e.target.classList.contains('resize'))return;deleteNode(n.id);}); }); }
+  function renderNodes(){ nodesEl.innerHTML=''; nodes().forEach(n=>{ if(S.onlyLogic&&n.type!=='logic')return; const el=document.createElement('div');el.className='node'+(n.collapsed?' collapsed':'')+(S.selection===n.id?' selected':'')+(S.connectMode&&n.id===linkFirst?' link-src':'');el.dataset.id=n.id;el.dataset.type=n.type;el.style.left=n.x+'px';el.style.top=n.y+'px';el.style.width=n.w+'px'; const tb=document.createElement('div');tb.className='titlebar';tb.innerHTML='<span class="grip">⠿</span><span class="fold">'+(n.collapsed?'▸':'▾')+'</span>'; const ti=document.createElement('span');ti.className='ntitle';ti.contentEditable='true';ti.spellcheck=false;ti.textContent=n.title||'';tb.appendChild(ti); const bo=document.createElement('div');bo.className='nbody';bo.contentEditable='true';bo.spellcheck=false;bo.textContent=n.text||''; const rz=document.createElement('div');rz.className='resize';rz.title='调大小'; el.appendChild(tb);el.appendChild(bo);el.appendChild(rz);nodesEl.appendChild(el); if(!n.collapsed)n.h=el.offsetHeight||n.h; n.w=el.offsetWidth||n.w; ['top','right','bottom','left'].forEach(p=>{const port=document.createElement('span');port.className='port p-'+p;port.dataset.port=p;port.addEventListener('pointerdown',e=>{e.stopPropagation();startConnect(e,n,p);});port.addEventListener('pointerup',e=>{e.stopPropagation();endConnectOnPort(e,n,p);});el.appendChild(port);}); ti.addEventListener('input',()=>{n.title=ti.innerText.replace(/\u00a0/g,' ').trim()===''?'':ti.innerText;markDirty();renderLib();}); bo.addEventListener('input',()=>{n.text=bo.innerText.replace(/\u00a0/g,' ').trim()===''?'':bo.innerText;if(!n.collapsed)n.h=el.offsetHeight||n.h;markDirty();renderLib();renderEdges();}); tb.querySelector('.grip').addEventListener('pointerdown',e=>onNodeDown(e,n,el)); tb.querySelector('.fold').addEventListener('click',e=>{e.stopPropagation();n.collapsed=!n.collapsed;markDirty();renderAll();}); rz.addEventListener('pointerdown',e=>onResizeDown(e,n,el)); el.addEventListener('dblclick',e=>{if(S.connectMode)return;if(e.target.classList.contains('port')||e.target.classList.contains('resize'))return;deleteNode(n.id);}); }); }
   function deleteNode(id){ pushHistory(); doc().nodes=nodes().filter(n=>n.id!==id); doc().edges=edges().filter(e=>e.from!==id&&e.to!==id); if(S.selection===id)S.selection=null; renderAll();renderLib(); }
   function onNodeDown(e,n,el){ if(e.button!==0)return; moved=false; setSelection(n.id); el.classList.add('dragging'); drag={kind:'node',id:n.id,sx:e.clientX,sy:e.clientY,ox:n.x,oy:n.y,_p:false}; e.preventDefault(); }
   function onResizeDown(e,n,el){ if(e.button!==0)return; setSelection(n.id); drag={kind:'resize',id:n.id,sx:e.clientX,sy:e.clientY,ow:n.w,oh:n.h,_p:true}; pushHistory(); e.preventDefault(); e.stopPropagation(); }
-  viewport.addEventListener('pointerdown',e=>{ if(e.target===viewport||e.target===world||e.target===gridSvg){moved=false;drag={kind:'pan',sx:e.clientX,sy:e.clientY,ox:S.panX,oy:S.panY};e.preventDefault();} });
+  viewport.addEventListener('pointerdown',e=>{ if(e.target===viewport||e.target===world||e.target===gridSvg){moved=false;drag={kind:'pan',sx:e.clientX,sy:e.clientY,ox:S.panX,oy:S.panY};e.preventDefault();if(S.connectMode&&linkFirst){linkFirst=null;refreshLinkSrc();flashHint('已取消选择，仍在连线模式');}} });
+  /* 连线模式：捕获阶段接管对节点的一切点击，屏蔽拖动/改字/端口 */
+  nodesEl.addEventListener('pointerdown',e=>{ if(!S.connectMode)return; const el=e.target.closest&&e.target.closest('.node'); if(!el||!el.dataset.id)return; e.preventDefault();e.stopPropagation(); linkPick(el.dataset.id); },true);
+  nodesEl.addEventListener('click',e=>{ if(!S.connectMode)return; if(e.target.closest&&e.target.closest('.node')){e.preventDefault();e.stopPropagation();} },true);
+  window.addEventListener('keydown',e=>{ if(e.key==='Escape'&&S.connectMode){ if(linkFirst){linkFirst=null;refreshLinkSrc();flashHint('已取消选择');} else setConnectMode(false); } });
   window.addEventListener('pointermove',e=>{ lastMouseX=e.clientX;lastMouseY=e.clientY; if(ghostType||ghostPayload){if(ghost._sx==null){ghost._sx=e.clientX;ghost._sy=e.clientY;}if(Math.abs(e.clientX-ghost._sx)+Math.abs(e.clientY-ghost._sy)>3)moved=true;ghost.style.left=e.clientX+'px';ghost.style.top=e.clientY+'px';} if(connecting){updateTempLine(clientToWorld(e.clientX,e.clientY));} if(edgeDrag){const nid=edgeDrag.side==='from'?edgeDrag.edge.from:edgeDrag.edge.to;setSelection(nid);return;} if(!drag)return; const dx=e.clientX-drag.sx,dy=e.clientY-drag.sy; if(Math.abs(dx)+Math.abs(dy)>3)moved=true; if(!moved)return; if(drag.kind==='node'){if(!drag._p){pushHistory();drag._p=true;}const n=byId(drag.id);const rawX=drag.ox+dx/S.zoom,rawY=drag.oy+dy/S.zoom;n.x=rawX;n.y=rawY;let smarted=false;if(S.snapOn){const sn=snapAlign(n);const eq=snapEqualGap(n);smarted=Math.abs(n.x-rawX)>0.01||Math.abs(n.y-rawY)>0.01;renderGuides(n,sn,eq);}if(!smarted){if(S.snapOn)clearGuides();if(S.gridSnap){n.x=snapV(rawX);n.y=snapV(rawY);}}const el=nodeEl(n.id);if(el){el.style.left=n.x+'px';el.style.top=n.y+'px';}renderEdges();} else if(drag.kind==='resize'){const n=byId(drag.id);let nw=Math.max(80,drag.ow+dx/S.zoom),nh=Math.max(40,drag.oh+dy/S.zoom);if(S.gridSnap){nw=snapV(nw);nh=snapV(nh);}n.w=nw;n.h=nh;const el=nodeEl(n.id);if(el){el.style.width=n.w+'px';if(!n.collapsed)el.style.height=n.h+'px';}renderEdges();} else if(drag.kind==='pan'){S.panX=drag.ox+dx;S.panY=drag.oy+dy;applyTransform();} });
   window.addEventListener('pointerup',e=>{ if(ghostType){const type=ghost._type;ghostType=null;ghost.style.display='none';if(moved){const p=clientToWorld(e.clientX,e.clientY);addNode(type,p.x-S.defW/2,p.y-8);}ghost._sx=null;} if(ghostPayload){const c=ghost._c;ghostPayload=null;ghost.style.display='none';if(moved){const p=clientToWorld(e.clientX,e.clientY);let nx=p.x-S.defW/2,ny=p.y-8;if(S.gridSnap){nx=snapV(nx);ny=snapV(ny);}pushHistory();const n={id:'n'+S.seq,type:c.type,title:c.title,text:c.text,collapsed:false,x:nx,y:ny,w:S.defW,h:S.defH};S.seq++;nodes().push(n);placeAvoidOverlap(n);renderAll();}ghost._sx=null;} if(drag&&(drag.kind==='node'||drag.kind==='resize')){const el=nodeEl(drag.id);if(el)el.classList.remove('dragging');} clearGuides(); if(drag&&drag.kind==='node'&&moved){evenOutChain(byId(drag.id));renderAll();} drag=null; });
 
@@ -353,7 +367,37 @@
   function endConnectOnPort(e,n,port){if(!connecting)return;const f=connecting.fromId,fp=connecting.fromPort;if(f===n.id&&fp===port){cancelConnect();return;}addEdge(f,fp,n.id,port);cancelConnect();}
   function cancelConnect(){connecting=null;if(tempLine){tempLine.remove();tempLine=null;}}
   window.addEventListener('pointerup',e=>{if(connecting){const overNode=e.target&&e.target.closest&&e.target.closest('.node');if(overNode&&overNode.dataset.id!==connecting.fromId){addEdge(connecting.fromId,connecting.fromPort,overNode.dataset.id,'left');}else if(!overNode){const p=clientToWorld(e.clientX,e.clientY);const src=byId(connecting.fromId);const n=addNode(src.type,p.x-S.defW/2,p.y-8);addEdge(connecting.fromId,connecting.fromPort,n.id,'left');}cancelConnect();}});
-  function addEdge(fromId,fromPort,toId,toPort){const rev=edges().find(e=>e.from===toId&&e.to===fromId&&e.directed);pushHistory();if(rev){rev.directed=false;renderEdges();flashHint('已变无向线');return rev;}const edge={id:'e'+S.seq,from:fromId,to:toId,fromPort,toPort,label:'',directed:!S.undirectedMode};S.seq++;edges().push(edge);renderEdges();return edge;}
+  function addEdge(fromId,fromPort,toId,toPort){const rev=edges().find(e=>e.from===toId&&e.to===fromId&&e.directed);pushHistory();if(rev){rev.directed=false;renderEdges();flashHint('已变无向线');return rev;}const edge={id:'e'+S.seq,from:fromId,to:toId,fromPort,toPort,label:'',directed:!S.undirectedMode};S.seq++;edges().push(edge);renderEdges();scheduleSave();return edge;}
+  /* ---------- 连线模式：点两个框即连线，端口自动选最美出线侧 ---------- */
+  function sideCount(id,side){return edges().filter(e=>(e.from===id&&e.fromPort===side)||(e.to===id&&e.toPort===side)).length;}
+  function bestPorts(a,c){
+    const Ha=nodeH(a),Hc=nodeH(c);
+    const ax=a.x+a.w/2,ay=a.y+Ha/2,cx=c.x+c.w/2,cy=c.y+Hc/2,dx=cx-ax,dy=cy-ay;
+    const ovY=Math.min(a.y+Ha,c.y+Hc)-Math.max(a.y,c.y);
+    const ovX=Math.min(a.x+a.w,c.x+c.w)-Math.max(a.x,c.x);
+    let horiz;
+    if(ovY>4&&ovX<=4)horiz=true; else if(ovX>4&&ovY<=4)horiz=false;
+    else horiz=Math.abs(dx)/(a.w+c.w)>=Math.abs(dy)/(Ha+Hc);
+    let p1,p2;
+    if(horiz){ if(dx>=0){p1='right';p2='left';}else{p1='left';p2='right';} }
+    else { if(dy>=0){p1='bottom';p2='top';}else{p1='top';p2='bottom';} }
+    /* 出线侧拥挤且对侧完全空闲时，走对侧并整体翻转，避免多条线挤一个端口 */
+    if(sideCount(a.id,p1)>=2&&sideCount(a.id,{right:'left',left:'right',top:'bottom',bottom:'top'}[p1])===0){ const opp={right:'left',left:'right',top:'bottom',bottom:'top'}; p1=opp[p1];p2=opp[p2]; }
+    return{fromPort:p1,toPort:p2};
+  }
+  function refreshLinkSrc(){ nodesEl.querySelectorAll('.link-src').forEach(e=>e.classList.remove('link-src')); if(linkFirst){const el=nodeEl(linkFirst);if(el)el.classList.add('link-src');} }
+  function setConnectMode(on){ S.connectMode=on; document.body.classList.toggle('connect-mode',on); document.getElementById('connect-mode').classList.toggle('on',on); linkFirst=null; refreshLinkSrc(); if(on)flashHint('连线模式：点第一个框（起点），再点第二个框完成连线；Esc 取消'); scheduleSave(); }
+  function linkPick(id){
+    if(!linkFirst){ linkFirst=id; refreshLinkSrc(); flashHint((S.undirectedMode?'再点一个框与它无向连接':'再点一个框作为终点（有向）')+'；Esc 取消'); return; }
+    if(linkFirst===id){ linkFirst=null; refreshLinkSrc(); flashHint('已取消选择'); return; }
+    const dup=edges().some(e=>e.from===linkFirst&&e.to===id);
+    const a=byId(linkFirst),c=byId(id);
+    if(dup){flashHint('两点之间已有该方向连线');linkFirst=null;refreshLinkSrc();return;}
+    const {fromPort,toPort}=bestPorts(a,c);
+    addEdge(linkFirst,fromPort,id,toPort);
+    linkFirst=null; refreshLinkSrc();
+    flashHint('已连线，可继续点选下一个起点；Esc 或再点按钮退出连线模式');
+  }
   function deleteEdge(id){pushHistory();doc().edges=edges().filter(e=>e.id!==id);renderEdges();}
 
   /* 边渲染 */
