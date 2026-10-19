@@ -384,7 +384,10 @@
   function addEdge(fromId,fromPort,toId,toPort){const rev=edges().find(e=>e.from===toId&&e.to===fromId&&e.directed);pushHistory();if(rev){rev.directed=false;renderEdges();flashHint('已变无向线');return rev;}const edge={id:'e'+S.seq,from:fromId,to:toId,fromPort,toPort,label:'',directed:!S.undirectedMode};S.seq++;edges().push(edge);renderEdges();scheduleSave();return edge;}
   /* ---------- 连线模式：点两个框即连线，端口自动选最美出线侧 ---------- */
   function sideCount(id,side){return edges().filter(e=>(e.from===id&&e.fromPort===side)||(e.to===id&&e.toPort===side)).length;}
-  /* 节点 n 朝向 other 的出线侧——手动拖线的直觉选择；自动连线照它选，保证两者行为完全一致 */
+  /* 直线段 p1-p2 是否穿过任一矩形（判断两端“直连”是否被中间块挡道） */
+  function segHitsRect(p1,p2,rects,pad){const n=24;for(const r of rects){const x1=r.x-pad,y1=r.y-pad,x2=r.x+r.w+pad,y2=r.y+r.h+pad;for(let i=0;i<=n;i++){const t=i/n,x=p1.x+(p2.x-p1.x)*t,y=p1.y+(p2.y-p1.y)*t;if(x>=x1&&x<=x2&&y>=y1&&y<=y2)return true;}}return false;}
+  /* 节点 n 朝向 other 的出线侧——手动拖线的直觉选择；自动连线照它选，保证两者行为完全一致。
+     若两端正对轴被中间块挡住，则改走同侧的两个点（垂直被挡走左右、水平被挡走上下），避免绕行弧线被顶到很远 */
   function facingPort(n,other){
     const Hn=nodeH(n),Ho=nodeH(other);
     const nx=n.x+n.w/2,ny=n.y+Hn/2,ox=other.x+other.w/2,oy=other.y+Ho/2;
@@ -394,6 +397,18 @@
     let horiz;
     if(ovY>4&&ovX<=4)horiz=true; else if(ovX>4&&ovY<=4)horiz=false;
     else horiz=Math.abs(dx)/(n.w+other.w)>=Math.abs(dy)/(Hn+Ho);
+    const blockers=visibleNodes().filter(x=>x.id!==n.id&&x.id!==other.id).map(x=>({x:x.x,y:x.y,w:x.w,h:nodeH(x)}));
+    if(blockers.length&&segHitsRect({x:nx,y:ny},{x:ox,y:oy},blockers,EDGE_DETECT)){
+      if(horiz){
+        const t=segHitsRect(portPos(n,'top'),{x:ox,y:oy},blockers,EDGE_DETECT);
+        const b=segHitsRect(portPos(n,'bottom'),{x:ox,y:oy},blockers,EDGE_DETECT);
+        if(t&&!b)return 'bottom'; if(b&&!t)return 'top'; return 'bottom';
+      }else{
+        const l=segHitsRect(portPos(n,'left'),{x:ox,y:oy},blockers,EDGE_DETECT);
+        const r=segHitsRect(portPos(n,'right'),{x:ox,y:oy},blockers,EDGE_DETECT);
+        if(l&&!r)return 'right'; if(r&&!l)return 'left'; return 'right';
+      }
+    }
     if(horiz)return dx>=0?'right':'left';
     return dy>=0?'bottom':'top';
   }
