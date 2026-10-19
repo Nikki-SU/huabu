@@ -104,7 +104,6 @@
   #edge-tools button{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;background:#f2f4f8;border-radius:5px;cursor:pointer;color:#444;padding:0;}
   #edge-tools button svg{width:15px;height:15px;display:block;}
   #edge-tools button:hover{background:#e4e8f0;color:#111;}
-  #edge-tools button#edge-del-btn:hover{background:#fee2e2;color:#b91c1c;}
   /* 固定浮动画板（图例式添加） */
   #add-legend{position:fixed;left:272px;top:60px;z-index:29;background:#fff;border:1px solid var(--border);border-radius:12px;padding:8px;box-shadow:0 6px 24px rgba(0,0,0,.14);display:flex;flex-direction:column;gap:6px;}
   .add-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;cursor:grab;font-size:14px;color:#fff;min-width:74px;-webkit-user-select:none;user-select:none;}
@@ -182,7 +181,7 @@
 <div id="hint"></div>
 <div id="loading"><div class="spinner"></div><div class="load-txt">正在加载工作区…</div></div>
 <div class="float-input" id="float-input"><textarea id="float-text"></textarea><div class="row"><button id="float-cancel">取消</button><button id="float-ok">确定</button></div></div>
-<div id="edge-tools"><button id="edge-label-btn" title="编辑连线文字（Enter）"></button><button id="edge-del-btn" title="删除连线（双击线或按 Delete）"></button></div>
+<div id="edge-tools"><button id="edge-label-btn" title="编辑连线文字（单击线后自动进入，或直接点此笔头）"></button></div>
 <div id="ghost"></div>
 <div id="promptbox">
   <div style="font-weight:700;margin-bottom:6px">组件 md 规则（可复制给 AI）</div>
@@ -266,7 +265,7 @@
     S.onlyLogic=!!data.onlyLogic; S.undirectedMode=!!data.undirectedMode; S.snapOn=data.snapOn!==false; S.gridSnap=data.gridSnap!==false; S.connectMode=!!data.connectMode;
     S.defW=data.defW||160; S.defH=data.defH||90;
     S.showSidebar=data.showSidebar!==false; S.libTab=data.libTab||'logic'; S.libSearch=data.libSearch||'';
-    S.selection=null; S.selectedEdge=null;
+    S.selection=null; S.selectedEdge=null; cancelEdgeClick();
     document.getElementById('only-logic').classList.toggle('active',S.onlyLogic);
     const ud=document.getElementById('undirected'); ud.classList.toggle('on',S.undirectedMode); ud.innerHTML=iconSvg(S.undirectedMode?'biline':'arrow');
     sidebar.classList.toggle('hidden',!S.showSidebar); viewport.classList.toggle('full',!S.showSidebar);
@@ -330,7 +329,7 @@
     else if(ctrl && e.key==='1'){e.preventDefault();addAtCursor('logic');}
     else if(ctrl && e.key==='2'){e.preventDefault();addAtCursor('event');}
     else if(ctrl && e.key==='3'){e.preventDefault();addAtCursor('theory');}
-    else if(ctrl && e.key==='Backspace'){e.preventDefault(); if(S.selectedEdge){deleteEdge(S.selectedEdge);S.selectedEdge=null;} else if(S.selection){deleteNode(S.selection);} }
+    else if(ctrl && e.key==='Backspace'){e.preventDefault(); if(S.selectedEdge){cancelEdgeClick();deleteEdge(S.selectedEdge);S.selectedEdge=null;} else if(S.selection){deleteNode(S.selection);} }
   });
 
   /* 工具栏 */
@@ -338,7 +337,7 @@
   function startGhostBtn(e,type){ ghostType=type;moved=false;ghostPayload=null;ghost.style.display='block';ghost.style.background=COL[type];ghost.textContent=TYPES[type];ghost.style.left=e.clientX+'px';ghost.style.top=e.clientY+'px';ghost._type=type;e.preventDefault(); }
   document.getElementById('only-logic').onclick=function(){S.onlyLogic=!S.onlyLogic;this.classList.toggle('active',S.onlyLogic);renderAll();scheduleSave();};
   document.getElementById('undirected').onclick=function(){S.undirectedMode=!S.undirectedMode;this.classList.toggle('on',S.undirectedMode);this.innerHTML=iconSvg(S.undirectedMode?'biline':'arrow');scheduleSave();};
-  document.getElementById('tidy-layout').onclick=function(){const b=this;b.classList.add('on');setTimeout(()=>{tidyLayout();requestAnimationFrame(()=>b.classList.remove('on'));},150);};
+  document.getElementById('tidy-layout').onclick=function(){const b=this;if(b.classList.contains('on'))return;b.classList.add('on');setTimeout(()=>{try{tidyLayout();}catch(err){console.error(err);flashHint('整理布局失败：'+err.message);}finally{b.classList.remove('on');}},150);};
   document.getElementById('snap-toggle').onclick=function(){S.snapOn=!S.snapOn;this.classList.toggle('on',S.snapOn);flashHint(S.snapOn?'已开启智能吸附':'已关闭智能吸附（自由摆放）');scheduleSave();};
   document.getElementById('grid-snap').onclick=function(){S.gridSnap=!S.gridSnap;this.classList.toggle('on',S.gridSnap);flashHint(S.gridSnap?'已开启网格吸附':'已关闭网格吸附');scheduleSave();};
   document.getElementById('connect-mode').onclick=function(){setConnectMode(!S.connectMode);};
@@ -365,7 +364,7 @@
   /* 连线模式：捕获阶段接管对节点的一切点击，屏蔽拖动/改字/端口 */
   nodesEl.addEventListener('pointerdown',e=>{ if(!S.connectMode)return; const el=e.target.closest&&e.target.closest('.node'); if(!el||!el.dataset.id)return; e.preventDefault();e.stopPropagation(); linkPick(el.dataset.id); },true);
   nodesEl.addEventListener('click',e=>{ if(!S.connectMode)return; if(e.target.closest&&e.target.closest('.node')){e.preventDefault();e.stopPropagation();} },true);
-  window.addEventListener('keydown',e=>{ if(e.key==='Escape'&&S.connectMode){ if(linkFirst){linkFirst=null;refreshLinkSrc();flashHint('已取消选择');} else setConnectMode(false); }
+  window.addEventListener('keydown',e=>{ if(e.key==='Escape')cancelEdgeClick(); if(e.key==='Escape'&&S.connectMode){ if(linkFirst){linkFirst=null;refreshLinkSrc();flashHint('已取消选择');} else setConnectMode(false); }
     const t=e.target,typing=t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
     if(!typing&&S.selectedEdge&&(e.key==='Delete'||e.key==='Backspace')){const id=S.selectedEdge;deleteEdge(id);e.preventDefault();}
     if(!typing&&S.selectedEdge&&(e.key==='Enter'||e.key==='F2')){const ed=edges().find(x=>x.id===S.selectedEdge);if(ed)editEdgeLabel(ed);e.preventDefault();}
@@ -437,17 +436,17 @@
     linkFirst=null; refreshLinkSrc();
     flashHint('已连线，可继续点选下一个起点；Esc 或再点按钮退出连线模式');
   }
-  function deleteEdge(id){pushHistory();doc().edges=edges().filter(e=>e.id!==id);if(S.selectedEdge===id)S.selectedEdge=null;renderEdges();}
-  /* 选中连线的浮动工具条 */
+  function deleteEdge(id){cancelEdgeClick();floatInput.style.display='none';pushHistory();doc().edges=edges().filter(e=>e.id!==id);if(S.selectedEdge===id)S.selectedEdge=null;renderEdges();}
+  /* 选中连线的浮动工具条：只留笔头；删除靠“短时间内再点一次线” */
   const edgeTools=document.getElementById('edge-tools');
   document.getElementById('edge-label-btn').innerHTML=iconSvg('pencil');
-  document.getElementById('edge-del-btn').innerHTML=iconSvg('trash');
   function selectedEdgeObj(){const id=S.selectedEdge;return id?edges().find(e=>e.id===id):null;}
-  function updateEdgeTools(){const edge=selectedEdgeObj();if(!edge){edgeTools.style.display='none';return;}const a=byId(edge.from),c=byId(edge.to);if(!a||!c||(S.onlyLogic&&(a.type!=='logic'||c.type!=='logic'))){edgeTools.style.display='none';return;}const p1=portPos(a,edge.fromPort),p2=portPos(c,edge.toPort);const p=clientFromWorld((p1.x+p2.x)/2,(p1.y+p2.y)/2-26);edgeTools.style.display='flex';const r=edgeTools.getBoundingClientRect();edgeTools.style.left=Math.max(8,Math.min(p.x-r.width/2,innerWidth-r.width-8))+'px';edgeTools.style.top=Math.max(56,Math.min(p.y-r.height-6,innerHeight-r.height-8))+'px';}
-  document.getElementById('edge-del-btn').addEventListener('pointerdown',e=>e.stopPropagation());
+  function edgeMid(edge){const a=byId(edge.from),c=byId(edge.to);if(!a||!c)return null;const p1=portPos(a,edge.fromPort),p2=portPos(c,edge.toPort);const cp=routeEdge(p1,p2,edgeBlockers(a,c));return{x:0.25*p1.x+0.5*cp.x+0.25*p2.x,y:0.25*p1.y+0.5*cp.y+0.25*p2.y};}
+  let edgeClickTimer=null,edgeClickId=null;
+  function cancelEdgeClick(){if(edgeClickTimer)clearTimeout(edgeClickTimer);edgeClickTimer=null;edgeClickId=null;}
+  function updateEdgeTools(){const edge=selectedEdgeObj();if(!edge){edgeTools.style.display='none';return;}const a=byId(edge.from),c=byId(edge.to);if(!a||!c||(S.onlyLogic&&(a.type!=='logic'||c.type!=='logic'))){edgeTools.style.display='none';return;}const m=edgeMid(edge);if(!m){edgeTools.style.display='none';return;}const p=clientFromWorld(m.x,m.y);edgeTools.style.display='flex';const r=edgeTools.getBoundingClientRect();edgeTools.style.left=Math.max(8,Math.min(p.x-r.width/2,innerWidth-r.width-8))+'px';edgeTools.style.top=Math.max(56,Math.min(p.y-r.height-12,innerHeight-r.height-8))+'px';}
   document.getElementById('edge-label-btn').addEventListener('pointerdown',e=>e.stopPropagation());
-  document.getElementById('edge-del-btn').addEventListener('click',()=>{const e=selectedEdgeObj();if(e)deleteEdge(e.id);});
-  document.getElementById('edge-label-btn').addEventListener('click',()=>{const e=selectedEdgeObj();if(e)editEdgeLabel(e);});
+  document.getElementById('edge-label-btn').addEventListener('click',()=>{cancelEdgeClick();const e=selectedEdgeObj();if(e)editEdgeLabel(e);});
   window.addEventListener('resize',updateEdgeTools);
 
   /* 边渲染 */
@@ -462,8 +461,8 @@
   function routeEdge(p1,p2,rects){return routeInfo(p1,p2,rects).cp;}
   function renderEdges(){ edgesSvg.innerHTML=''; const inCnt={},outCnt={}; edges().forEach(e=>{inCnt[e.to+':'+e.toPort]=(inCnt[e.to+':'+e.toPort]||0)+1;outCnt[e.from+':o:'+e.fromPort]=(outCnt[e.from+':o:'+e.fromPort]||0)+1;}); function stub(n,port,side){const isIn=side==='in';const cnt=isIn?(inCnt[n.id+':'+port]||0):(outCnt[n.id+':o:'+port]||0);if(cnt<2)return null;const b=portPos(n,port),d=portDir(port),L=bundleLen(n);return{x:b.x+d[0]*L,y:b.y+d[1]*L};} edges().forEach(edge=>{ const a=byId(edge.from),c=byId(edge.to); if(!a||!c)return; if(S.onlyLogic&&(a.type!=='logic'||c.type!=='logic'))return; const p1=stub(a,edge.fromPort,'out')||portPos(a,edge.fromPort); const p2=stub(c,edge.toPort,'in')||portPos(c,edge.toPort); const cp=routeEdge(p1,p2,edgeBlockers(a,c)); const mx=cp.x,my=cp.y; const d='M '+p1.x+' '+p1.y+' Q '+mx+' '+my+' '+p2.x+' '+p2.y; const g=document.createElementNS('http://www.w3.org/2000/svg','g'); const hi=S.selectedEdge===edge.id; const hit=document.createElementNS('http://www.w3.org/2000/svg','path');hit.setAttribute('d',d);hit.setAttribute('class','edge-hit');bindEdge(hit,edge);g.appendChild(hit); const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',d);path.setAttribute('class','edge-path'+(edge.directed?'':' undir')+(hi?' hi':''));path.setAttribute('vector-effect','non-scaling-stroke');path.style.pointerEvents='none';g.appendChild(path); if(edge.directed){ const arr=arrowTip(p1,p2,mx,my); const ap=document.createElementNS('http://www.w3.org/2000/svg','path'); ap.setAttribute('d',arr.d); ap.setAttribute('fill','#fff'); ap.setAttribute('stroke',hi?'#e11d48':'#333'); ap.setAttribute('stroke-width','1.5'); ap.style.pointerEvents='none'; g.appendChild(ap); } if(edge.label){ const lb=document.createElementNS('http://www.w3.org/2000/svg','text');lb.setAttribute('x',mx);lb.setAttribute('y',my-6);lb.setAttribute('class','edge-label');lb.style.pointerEvents='none';lb.textContent=edge.label;g.appendChild(lb); } addEndpoint(g,p1,edge,'from');addEndpoint(g,p2,edge,'to'); edgesSvg.appendChild(g); }); const drawn={}; edges().forEach(edge=>{ const a=byId(edge.from),c=byId(edge.to); if(!a||!c)return; if(S.onlyLogic&&(a.type!=='logic'||c.type!=='logic'))return; [['out',a,edge.fromPort],['in',c,edge.toPort]].forEach(([side,n,port])=>{ if(!stub(n,port,side))return; const key=n.id+port+side;if(drawn[key])return;drawn[key]=1; const b=portPos(n,port),d=portDir(port),L=bundleLen(n);const s={x:b.x+d[0]*L,y:b.y+d[1]*L}; const main=document.createElementNS('http://www.w3.org/2000/svg','path'); main.setAttribute('d','M '+b.x+' '+b.y+' L '+s.x+' '+s.y); main.setAttribute('class','edge-main');main.setAttribute('vector-effect','non-scaling-stroke');main.style.pointerEvents='none'; edgesSvg.appendChild(main); }); }); updateEdgeTools(); }
   function arrowTip(p1,p2,mx,my){const tx=(p2.x-mx)*2,ty=(p2.y-my)*2;const len=Math.hypot(tx,ty)||1;const ux=tx/len,uy=ty/len,px=-uy,py=ux,s=9,x=p2.x,y=p2.y;return{d:'M '+(x-ux*s)+' '+(y-uy*s)+' L '+x+' '+y+' L '+(x-ux*s+px*s*0.55)+' '+(y-uy*s+py*s*0.55)+' L '+(x-ux*s-px*s*0.55)+' '+(y-uy*s-py*s*0.55)+' Z'};}
-  function bindEdge(el,edge){ el.addEventListener('click',e=>{e.stopPropagation();const already=S.selectedEdge===edge.id;S.selectedEdge=edge.id;renderEdges();if(S.undirectedMode&&already&&edge.directed){pushHistory();edge.directed=false;renderEdges();flashHint('已改无向线（双击线可删除）');}}); el.addEventListener('dblclick',e=>{e.stopPropagation();deleteEdge(edge.id);}); }
-  function editEdgeLabel(edge){const a=byId(edge.from),c=byId(edge.to);if(!a||!c)return;const mid=clientFromWorld((a.x+c.x)/2,(a.y+c.y)/2-20);floatText.value=edge.label||'';floatInput.style.display='block';floatInput._cb=v=>{pushHistory();edge.label=v.trim();renderEdges();};const r=floatInput.getBoundingClientRect();floatInput.style.left=Math.min(mid.x,innerWidth-r.width-10)+'px';floatInput.style.top=Math.min(mid.y,innerHeight-r.height-10)+'px';floatText.focus();}
+  function bindEdge(el,edge){ el.addEventListener('click',e=>{e.stopPropagation();const again=edgeClickId===edge.id&&!!edgeClickTimer;S.selectedEdge=edge.id;renderEdges();if(again){cancelEdgeClick();deleteEdge(edge.id);return;}cancelEdgeClick();edgeClickId=edge.id;edgeClickTimer=setTimeout(()=>{edgeClickTimer=null;edgeClickId=null;const t=edges().find(x=>x.id===edge.id);if(t&&S.selectedEdge===edge.id)editEdgeLabel(t);},420);}); el.addEventListener('dblclick',e=>{e.stopPropagation();cancelEdgeClick();if(edges().some(x=>x.id===edge.id))deleteEdge(edge.id);}); }
+  function editEdgeLabel(edge){cancelEdgeClick();const a=byId(edge.from),c=byId(edge.to);if(!a||!c)return;const m=edgeMid(edge)||{x:(a.x+c.x)/2,y:(a.y+c.y)/2};const mid=clientFromWorld(m.x,m.y);floatText.value=edge.label||'';floatInput.style.display='block';edgeTools.style.display='none';floatInput._cb=v=>{pushHistory();edge.label=v.trim();renderEdges();};const r=floatInput.getBoundingClientRect();floatInput.style.left=Math.max(8,Math.min(mid.x-r.width/2,innerWidth-r.width-10))+'px';floatInput.style.top=Math.max(56,Math.min(mid.y-r.height-12,innerHeight-r.height-10))+'px';floatText.focus();}
   function addEndpoint(parent,p,edge,side){const hit=document.createElementNS('http://www.w3.org/2000/svg','circle');hit.setAttribute('cx',p.x);hit.setAttribute('cy',p.y);hit.setAttribute('r',13);hit.setAttribute('fill','transparent');hit.classList.add('edge-port');hit.style.cursor='crosshair';hit.style.pointerEvents='all';hit.addEventListener('pointerdown',e=>{e.stopPropagation();edgeDrag={edge,side,pos:p};document.body.classList.add('edge-dragging');e.preventDefault();});parent.appendChild(hit);const h=document.createElementNS('http://www.w3.org/2000/svg','circle');h.setAttribute('cx',p.x);h.setAttribute('cy',p.y);h.setAttribute('r',5.5);h.setAttribute('fill','#fff');h.setAttribute('stroke','#556');h.setAttribute('stroke-width','2');h.setAttribute('class','edge-dot'+(S.selectedEdge===edge.id?' hi':''));parent.appendChild(h);}
   window.addEventListener('pointerup',e=>{if(document.body.classList.contains('edge-dragging'))document.body.classList.remove('edge-dragging');if(edgeDrag){const edge=edgeDrag.edge,side=edgeDrag.side;const w=clientToWorld(e.clientX,e.clientY);const over=nodeAtWorld(w.x,w.y,CONNECT_PAD/S.zoom);edgeDrag=null;if(over&&over.id!==(side==='from'?edge.from:edge.to)){pushHistory();if(side==='from')edge.from=over.id;else edge.to=over.id;const a=byId(edge.from),c=byId(edge.to);if(a&&c){const bp=bestPorts(a,c);edge.fromPort=bp.fromPort;edge.toPort=bp.toPort;}setSelection(over.id);}renderEdges();}});
 
@@ -562,7 +561,7 @@
       else { const sp=cs.map(place); const cL=sp[0].l,cR=sp[sp.length-1].r; x=(cL+cR)/2-w/2; l=Math.min(x,cL); r=Math.max(x+w,cR); if(l<start){ const dx=start-l; shiftSub(id,dx); x+=dx;l+=dx;r+=dx; } }
       byid[id].x=x; cursor=Math.max(cursor,r+H_GAP); return {l,r};
     }
-    roots.forEach(place);
+    roots.forEach(r=>place(r.id));
     ns.forEach(n=>{ n.y=rowY[depth[n.id]]; });
     const dx=origMinX-Math.min.apply(null,ns.map(n=>n.x)); if(dx)ns.forEach(n=>{ n.x+=dx; });
     renderAll(); markDirty(); flashHint('已整理布局：同级对齐 · 父节点居中 · 等距');
@@ -616,7 +615,7 @@
   })();
   window.addEventListener('resize',renderGrid);
   window.addEventListener('beforeunload',e=>{ if(S.docs.some(d=>d.dirty)){ e.preventDefault(); e.returnValue=''; return ''; } });
-  window.addEventListener('pointerdown',e=>{if(!e.target.closest('.node')&&!e.target.closest('.edge-hit')&&!e.target.closest('.edge-port')&&!e.target.closest('#sidebar')&&!e.target.closest('#toolbar')&&!e.target.closest('#add-legend')){if(S.selectedEdge){S.selectedEdge=null;renderEdges();}}});
+  window.addEventListener('pointerdown',e=>{if(!e.target.closest('.node')&&!e.target.closest('.edge-hit')&&!e.target.closest('.edge-port')&&!e.target.closest('#sidebar')&&!e.target.closest('#toolbar')&&!e.target.closest('#add-legend')){if(S.selectedEdge){cancelEdgeClick();S.selectedEdge=null;renderEdges();}}});
 })();
 </script>
 </body>
