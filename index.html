@@ -380,40 +380,29 @@
   function updateTempLine(p){if(!tempLine||!connecting)return;const a=byId(connecting.fromId);if(!a)return;const p1=portPos(a,connecting.fromPort);const mx=(p1.x+p.x)/2,my=(p1.y+p.y)/2-30;tempLine.setAttribute('d','M '+p1.x+' '+p1.y+' Q '+mx+' '+my+' '+p.x+' '+p.y);}
   function endConnectOnPort(e,n,port){if(!connecting)return;const f=connecting.fromId,fp=connecting.fromPort;if(f===n.id&&fp===port){cancelConnect();return;}addEdge(f,fp,n.id,port);cancelConnect();}
   function cancelConnect(){connecting=null;if(tempLine){tempLine.remove();tempLine=null;}}
-  window.addEventListener('pointerup',e=>{if(connecting){const w=clientToWorld(e.clientX,e.clientY);const over=nodeAtWorld(w.x,w.y,CONNECT_PAD/S.zoom);if(over){if(over.id!==connecting.fromId)addEdge(connecting.fromId,connecting.fromPort,over.id,'left');}else{const src=byId(connecting.fromId);const n=addNode(src.type,w.x-S.defW/2,w.y-8);addEdge(connecting.fromId,connecting.fromPort,n.id,'left');}cancelConnect();}});
+  window.addEventListener('pointerup',e=>{if(connecting){const w=clientToWorld(e.clientX,e.clientY);const over=nodeAtWorld(w.x,w.y,CONNECT_PAD/S.zoom);if(over){if(over.id!==connecting.fromId)addEdge(connecting.fromId,connecting.fromPort,over.id,facingPort(over,byId(connecting.fromId)));}else{const src=byId(connecting.fromId);const n=addNode(src.type,w.x-S.defW/2,w.y-8);addEdge(connecting.fromId,connecting.fromPort,n.id,facingPort(n,src));}cancelConnect();}});
   function addEdge(fromId,fromPort,toId,toPort){const rev=edges().find(e=>e.from===toId&&e.to===fromId&&e.directed);pushHistory();if(rev){rev.directed=false;renderEdges();flashHint('已变无向线');return rev;}const edge={id:'e'+S.seq,from:fromId,to:toId,fromPort,toPort,label:'',directed:!S.undirectedMode};S.seq++;edges().push(edge);renderEdges();scheduleSave();return edge;}
   /* ---------- 连线模式：点两个框即连线，端口自动选最美出线侧 ---------- */
   function sideCount(id,side){return edges().filter(e=>(e.from===id&&e.fromPort===side)||(e.to===id&&e.toPort===side)).length;}
-  function bestPorts(a,c){
-    const Ha=nodeH(a),Hc=nodeH(c);
-    const ax=a.x+a.w/2,ay=a.y+Ha/2,cx=c.x+c.w/2,cy=c.y+Hc/2,dx=cx-ax,dy=cy-ay;
-    const ovY=Math.min(a.y+Ha,c.y+Hc)-Math.max(a.y,c.y);
-    const ovX=Math.min(a.x+a.w,c.x+c.w)-Math.max(a.x,c.x);
+  /* 节点 n 朝向 other 的出线侧——手动拖线的直觉选择；自动连线照它选，保证两者行为完全一致 */
+  function facingPort(n,other){
+    const Hn=nodeH(n),Ho=nodeH(other);
+    const nx=n.x+n.w/2,ny=n.y+Hn/2,ox=other.x+other.w/2,oy=other.y+Ho/2;
+    const dx=ox-nx,dy=oy-ny;
+    const ovY=Math.min(n.y+Hn,other.y+Ho)-Math.max(n.y,other.y);
+    const ovX=Math.min(n.x+n.w,other.x+other.w)-Math.max(n.x,other.x);
     let horiz;
     if(ovY>4&&ovX<=4)horiz=true; else if(ovX>4&&ovY<=4)horiz=false;
-    else horiz=Math.abs(dx)/(a.w+c.w)>=Math.abs(dy)/(Ha+Hc);
-    let p1,p2;
-    if(horiz){ if(dx>=0){p1='right';p2='left';}else{p1='left';p2='right';} }
-    else { if(dy>=0){p1='bottom';p2='top';}else{p1='top';p2='bottom';} }
+    else horiz=Math.abs(dx)/(n.w+other.w)>=Math.abs(dy)/(Hn+Ho);
+    if(horiz)return dx>=0?'right':'left';
+    return dy>=0?'bottom':'top';
+  }
+  function bestPorts(a,c){
+    /* 与手动连线一致：两端都选朝向对方的自然出线侧，避障交给统一的曲线绕行逻辑处理 */
+    let p1=facingPort(a,c),p2=facingPort(c,a);
     const OPP={right:'left',left:'right',top:'bottom',bottom:'top'};
     /* 出线侧拥挤且对侧完全空闲时，走对侧并整体翻转，避免多条线挤一个端口 */
     if(sideCount(a.id,p1)>=2&&sideCount(a.id,OPP[p1])===0){ p1=OPP[p1];p2=OPP[p2]; }
-    /* 自动连线也要避障：在朝向对方的候选出线组合里，挑不穿块、弧高最小的一条，与手动连线行为一致 */
-    const blockers=edgeBlockers(a,c);
-    if(blockers.length){
-      const dirs={top:[0,-1],bottom:[0,1],left:[-1,0],right:[1,0]};
-      const S1=Object.keys(dirs).filter(s=>dirs[s][0]*dx+dirs[s][1]*dy>=0);
-      const S2=Object.keys(dirs).filter(s=>dirs[s][0]*dx+dirs[s][1]*dy<=0);
-      const cands=[[p1,p2]];
-      S1.forEach(x=>S2.forEach(y=>{ if(x===p1&&y===p2)return; cands.push([x,y]); }));
-      let best=[p1,p2],bestScore=null;
-      cands.forEach(([q1,q2],idx)=>{
-        const info=routeInfo(portPos(a,q1),portPos(c,q2),blockers);
-        const score=info.hits*100000+info.bulge+sideCount(a.id,q1)*8+idx*0.1;
-        if(bestScore===null||score<bestScore){bestScore=score;best=[q1,q2];}
-      });
-      p1=best[0];p2=best[1];
-    }
     return{fromPort:p1,toPort:p2};
   }
   function refreshLinkSrc(){ nodesEl.querySelectorAll('.link-src').forEach(e=>e.classList.remove('link-src')); if(linkFirst){const el=nodeEl(linkFirst);if(el)el.classList.add('link-src');} }
@@ -457,7 +446,7 @@
   function bindEdge(el,edge){ el.addEventListener('click',e=>{e.stopPropagation();const already=S.selectedEdge===edge.id;S.selectedEdge=edge.id;renderEdges();if(S.undirectedMode&&already&&edge.directed){pushHistory();edge.directed=false;renderEdges();flashHint('已改无向线（双击线可删除）');}}); el.addEventListener('dblclick',e=>{e.stopPropagation();deleteEdge(edge.id);}); }
   function editEdgeLabel(edge){const a=byId(edge.from),c=byId(edge.to);if(!a||!c)return;const mid=clientFromWorld((a.x+c.x)/2,(a.y+c.y)/2-20);floatText.value=edge.label||'';floatInput.style.display='block';floatInput._cb=v=>{pushHistory();edge.label=v.trim();renderEdges();};const r=floatInput.getBoundingClientRect();floatInput.style.left=Math.min(mid.x,innerWidth-r.width-10)+'px';floatInput.style.top=Math.min(mid.y,innerHeight-r.height-10)+'px';floatText.focus();}
   function addEndpoint(parent,p,edge,side){const hit=document.createElementNS('http://www.w3.org/2000/svg','circle');hit.setAttribute('cx',p.x);hit.setAttribute('cy',p.y);hit.setAttribute('r',13);hit.setAttribute('fill','transparent');hit.classList.add('edge-port');hit.style.cursor='crosshair';hit.style.pointerEvents='all';hit.addEventListener('pointerdown',e=>{e.stopPropagation();edgeDrag={edge,side,pos:p};e.preventDefault();});parent.appendChild(hit);const h=document.createElementNS('http://www.w3.org/2000/svg','circle');h.setAttribute('cx',p.x);h.setAttribute('cy',p.y);h.setAttribute('r',6);h.setAttribute('fill','#fff');h.setAttribute('stroke','#556');h.setAttribute('stroke-width','2');h.style.pointerEvents='none';parent.appendChild(h);}
-  window.addEventListener('pointerup',e=>{if(edgeDrag){const edge=edgeDrag.edge,side=edgeDrag.side;const w=clientToWorld(e.clientX,e.clientY);const over=nodeAtWorld(w.x,w.y,CONNECT_PAD/S.zoom);edgeDrag=null;if(over&&over.id!==(side==='from'?edge.from:edge.to)){pushHistory();if(side==='from'){edge.from=over.id;edge.fromPort='right';}else{edge.to=over.id;edge.toPort='left';}setSelection(over.id);}renderEdges();}});
+  window.addEventListener('pointerup',e=>{if(edgeDrag){const edge=edgeDrag.edge,side=edgeDrag.side;const w=clientToWorld(e.clientX,e.clientY);const over=nodeAtWorld(w.x,w.y,CONNECT_PAD/S.zoom);edgeDrag=null;if(over&&over.id!==(side==='from'?edge.from:edge.to)){pushHistory();if(side==='from')edge.from=over.id;else edge.to=over.id;const a=byId(edge.from),c=byId(edge.to);if(a&&c){const bp=bestPorts(a,c);edge.fromPort=bp.fromPort;edge.toPort=bp.toPort;}setSelection(over.id);}renderEdges();}});
 
   /* ---------- 智能对齐 / 均分 ---------- */
   const NS='http://www.w3.org/2000/svg';
