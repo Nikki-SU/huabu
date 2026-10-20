@@ -4,15 +4,46 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>田野材料大纲画布</title>
+<link rel="preconnect" href="https://fastly.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<script>
+(function(){
+  var MIRRORS=[
+    './fonts/lxgwwenkai-regular.css',
+    'https://fastly.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/lxgwwenkai-regular.css',
+    'https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/lxgwwenkai-regular.css',
+    'https://npm.elemecdn.com/lxgw-wenkai-webfont@1.7.0/lxgwwenkai-regular.css',
+    'https://unpkg.com/lxgw-wenkai-webfont@1.7.0/lxgwwenkai-regular.css'
+  ];
+  var i=0,done=false;
+  function ok(){ if(done)return; done=true; document.documentElement.className+=' font-lxgw'; }
+  function next(){
+    if(done)return;
+    if(i>=MIRRORS.length){ document.documentElement.className+=' font-fallback'; return; }
+    var l=document.createElement('link');
+    l.rel='stylesheet'; l.href=MIRRORS[i]; l.crossOrigin='anonymous';
+    var t=setTimeout(function(){ fail(); },7000);
+    function fail(){ if(done)return; clearTimeout(t); if(l.parentNode)l.parentNode.removeChild(l); i++; next(); }
+    l.onerror=fail;
+    l.onload=function(){
+      clearTimeout(t);
+      if(!document.fonts||!document.fonts.load){ ok(); return; }
+      document.fonts.load('16px "LXGW WenKai"','田野材料大纲画布').then(function(f){ f&&f.length?ok():fail(); },fail);
+    };
+    document.head.appendChild(l);
+  }
+  window.__lxgwRetry=next;
+  next();
+})();
+</script>
 <style>
-  @font-face{ font-family:'LXGW WenKai'; src:url('https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/fonts/LXGWWenKai-Regular.woff2') format('woff2'); font-display:swap; }
   :root{
     --logic:#4F46E5; --event:#059669; --theory:#EA580C;
     --edge:#5a6472; --grid:#e8e8ec; --border:#d8d8e0; --hl:#e11d48;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;height:100%;overflow:hidden;background:#fafafa;color:#1b1b1f;
-    font-family:"LXGW WenKai","Kaiti SC","STKaiti","KaiTi","楷体",serif;}
+    font-family:"LXGW WenKai","Kaiti SC","STKaiti","KaiTi","楷体","AR PL KaitiM GB","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;}
   #toolbar{position:fixed;top:0;left:0;right:0;height:52px;z-index:30;display:flex;align-items:center;gap:2px;padding:0 8px;background:#fff;border-bottom:1px solid var(--border);-webkit-user-select:none;user-select:none;overflow-x:auto;overflow-y:hidden;}
   #toolbar .brand{font-weight:700;font-size:15px;margin:0 8px 0 2px;white-space:nowrap;flex:none;}
   .sep{width:1px;height:24px;background:var(--border);flex:none;margin:0 4px;}
@@ -814,7 +845,7 @@ function refreshTapers(){ taperCache.forEach(t=>{ t.el.setAttribute('d',taperD(t
    }else{downloadText(JSON.stringify({nodes:o.nodes,edges:o.edges},null,2),doc().name+'-逻辑链.json','application/json');}flashHint('已导出逻辑链');}
   function downloadText(txt,name,type){const b=new Blob([txt],{type});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();}
   function bounds(){let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;nodes().forEach(n=>{if(S.onlyLogic&&n.type!=='logic')return;minX=Math.min(minX,n.x);minY=Math.min(minY,n.y);maxX=Math.max(maxX,n.x+n.w);maxY=Math.max(maxY,n.y+nodeH(n));});if(!nodes().length)return{x:0,y:0,w:400,h:300};return{x:minX,y:minY,w:maxX-minX,h:maxY-minY};}
-  async function exportJPG(){const b=bounds(),pad=60,scale=Math.min(2,2400/Math.max(b.w,b.h));const W=Math.round(b.w*scale+pad*2),H=Math.round(b.h*scale+pad*2);const cv=document.createElement('canvas');cv.width=W;cv.height=H;const ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);const imgs={};await Promise.all(nodes().filter(n=>n.img).map(n=>new Promise(res=>{const im=new Image();im.onload=()=>{imgs[n.id]=im;res();};im.onerror=()=>res();im.src=n.img;})));ctx.save();ctx.translate(pad-b.x*scale,pad-b.y*scale);ctx.scale(scale,scale);edges().forEach(e=>{const a=byId(e.from),c=byId(e.to);if(!a||!c)return;if(S.onlyLogic&&(a.type!=='logic'||c.type!=='logic'))return;const p1=portPos(a,e.fromPort),p2=portPos(c,e.toPort);const mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2-40;ctx.strokeStyle='#5a6472';ctx.lineWidth=1.8/scale;ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.quadraticCurveTo(mx,my,p2.x,p2.y);ctx.stroke();if(e.directed){const t=Math.atan2(p2.y-my,p2.x-mx),s=9;ctx.fillStyle='#fff';ctx.strokeStyle='#333';ctx.lineWidth=1.4/scale;ctx.beginPath();ctx.moveTo(p2.x,p2.y);ctx.lineTo(p2.x-s*Math.cos(t-0.45),p2.y-s*Math.sin(t-0.45));ctx.lineTo(p2.x-s*Math.cos(t+0.45),p2.y-s*Math.sin(t+0.45));ctx.closePath();ctx.fill();ctx.stroke();}if(e.label){ctx.font='13px "LXGW WenKai","KaiTi",serif';ctx.fillStyle='#333';ctx.textAlign='center';ctx.fillText(e.label,mx,my-6);}});nodes().forEach(n=>{if(S.onlyLogic&&n.type!=='logic')return;const col=typeColor(n.type);ctx.fillStyle=col;ctx.strokeStyle=col;ctx.lineWidth=3/scale;roundRect(ctx,n.x,n.y,n.w,nodeH(n),8);ctx.fill();ctx.stroke();ctx.fillStyle='#fff';ctx.font='bold 14px "LXGW WenKai","KaiTi",serif';ctx.textAlign='left';if(n.title)ctx.fillText(n.title,n.x+8,n.y+18);if(!n.collapsed){const im=imgs[n.id];if(im){const iw=im.naturalWidth||im.width,ih=im.naturalHeight||im.height;const bx=n.x+6,by=n.y+26,bw=n.w-12,bh=Math.max(16,nodeH(n)-32);const sc=Math.min(bw/iw,bh/ih);const dw=iw*sc,dh=ih*sc;ctx.drawImage(im,bx+(bw-dw)/2,by+(bh-dh)/2,dw,dh);}else if(n.text){ctx.font='14px "LXGW WenKai","KaiTi",serif';wrapText(ctx,n.text,n.x+8,n.y+36,n.w-16,18);}}});ctx.restore();const a=document.createElement('a');a.href=cv.toDataURL('image/jpeg',0.9);a.download=doc().name+'.jpg';a.click();flashHint('已导出 JPG');}
+  async function exportJPG(){if(document.fonts&&document.fonts.ready){try{await document.fonts.ready;}catch(e){}}const b=bounds(),pad=60,scale=Math.min(2,2400/Math.max(b.w,b.h));const W=Math.round(b.w*scale+pad*2),H=Math.round(b.h*scale+pad*2);const cv=document.createElement('canvas');cv.width=W;cv.height=H;const ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);const imgs={};await Promise.all(nodes().filter(n=>n.img).map(n=>new Promise(res=>{const im=new Image();im.onload=()=>{imgs[n.id]=im;res();};im.onerror=()=>res();im.src=n.img;})));ctx.save();ctx.translate(pad-b.x*scale,pad-b.y*scale);ctx.scale(scale,scale);edges().forEach(e=>{const a=byId(e.from),c=byId(e.to);if(!a||!c)return;if(S.onlyLogic&&(a.type!=='logic'||c.type!=='logic'))return;const p1=portPos(a,e.fromPort),p2=portPos(c,e.toPort);const mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2-40;ctx.strokeStyle='#5a6472';ctx.lineWidth=1.8/scale;ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.quadraticCurveTo(mx,my,p2.x,p2.y);ctx.stroke();if(e.directed){const t=Math.atan2(p2.y-my,p2.x-mx),s=9;ctx.fillStyle='#fff';ctx.strokeStyle='#333';ctx.lineWidth=1.4/scale;ctx.beginPath();ctx.moveTo(p2.x,p2.y);ctx.lineTo(p2.x-s*Math.cos(t-0.45),p2.y-s*Math.sin(t-0.45));ctx.lineTo(p2.x-s*Math.cos(t+0.45),p2.y-s*Math.sin(t+0.45));ctx.closePath();ctx.fill();ctx.stroke();}if(e.label){ctx.font='13px "LXGW WenKai","KaiTi",sans-serif';ctx.fillStyle='#333';ctx.textAlign='center';ctx.fillText(e.label,mx,my-6);}});nodes().forEach(n=>{if(S.onlyLogic&&n.type!=='logic')return;const col=typeColor(n.type);ctx.fillStyle=col;ctx.strokeStyle=col;ctx.lineWidth=3/scale;roundRect(ctx,n.x,n.y,n.w,nodeH(n),8);ctx.fill();ctx.stroke();ctx.fillStyle='#fff';ctx.font='bold 14px "LXGW WenKai","KaiTi",sans-serif';ctx.textAlign='left';if(n.title)ctx.fillText(n.title,n.x+8,n.y+18);if(!n.collapsed){const im=imgs[n.id];if(im){const iw=im.naturalWidth||im.width,ih=im.naturalHeight||im.height;const bx=n.x+6,by=n.y+26,bw=n.w-12,bh=Math.max(16,nodeH(n)-32);const sc=Math.min(bw/iw,bh/ih);const dw=iw*sc,dh=ih*sc;ctx.drawImage(im,bx+(bw-dw)/2,by+(bh-dh)/2,dw,dh);}else if(n.text){ctx.font='14px "LXGW WenKai","KaiTi",sans-serif';wrapText(ctx,n.text,n.x+8,n.y+36,n.w-16,18);}}});ctx.restore();const a=document.createElement('a');a.href=cv.toDataURL('image/jpeg',0.9);a.download=doc().name+'.jpg';a.click();flashHint('已导出 JPG');}
   function roundRect(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
   function wrapText(ctx,text,x,y,maxW,lh){const arr=Array.from(text);let line='';for(const ch of arr){if(ctx.measureText(line+ch).width>maxW){ctx.fillText(line,x,y);y+=lh;line=ch;}else line+=ch;}if(line)ctx.fillText(line,x,y);}
 
