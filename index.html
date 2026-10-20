@@ -233,7 +233,7 @@
   <div class="tp-row"><input type="text" id="tp-name" placeholder="类型名称" maxlength="8"><input type="color" id="tp-color" value="#2E4A7D"></div>
   <div class="tp-row"><input type="text" id="tp-hex" placeholder="#RRGGBB 自定义" maxlength="7" spellcheck="false" autocomplete="off"><span class="tp-prev" id="tp-prev"></span></div>
   <div class="tp-swatches" id="tp-swatches"></div>
-  <div class="tp-actions"><button class="danger" id="tp-del" title="删除该类型（内置类型不可删除）">ICON(trash)</button><span class="grow"></span><button id="tp-cancel">取消</button><button id="tp-ok">确定</button></div>
+  <div class="tp-actions"><button class="danger" id="tp-del" title="删除该类型">ICON(trash)</button><span class="grow"></span><button id="tp-cancel">取消</button><button id="tp-ok">确定</button></div>
 </div>
 
 <div id="hint"></div>
@@ -249,7 +249,7 @@
 
 <script>
 (function(){
-  const S={docs:[],active:0,seq:1,zoom:1,panX:0,panY:0,onlyLogic:false,undirectedMode:false,selection:null,selectedEdge:null,defW:160,defH:90,extra:[],libSearch:'',showSidebar:true,libTab:'logic',snapOn:true,gridSnap:true,connectMode:false};
+  const S={docs:[],active:0,seq:1,zoom:1,panX:0,panY:0,onlyLogic:false,undirectedMode:false,selection:null,selectedEdge:null,defW:160,defH:90,extra:[],libSearch:'',showSidebar:true,libTab:'',deletedBuiltins:[],snapOn:true,gridSnap:true,connectMode:false};
   const BUILTIN_TYPES=[{id:'logic',name:'逻辑',color:'#2E4A7D',builtin:true},{id:'event',name:'事件',color:'#2F6B5A',builtin:true},{id:'theory',name:'理论',color:'#9C4B2F',builtin:true}];
   const TYPE_COLORS=['#2E4A7D','#2F6B5A','#9C4B2F','#5B4B8A','#8A6D1F','#1F6F8B','#A03E56','#3A4A5A','#6B4C3A','#4B6B2F','#2B5F6B','#7A3B5E'];
   const LEGACY_COLORS={'#4f46e5':'#2E4A7D','#059669':'#2F6B5A','#ea580c':'#9C4B2F','#0ea5e9':'#1F6F8B','#7c3aed':'#5B4B8A','#db2777':'#A03E56','#ca8a04':'#8A6D1F','#475569':'#3A4A5A'};
@@ -262,8 +262,10 @@
   function normColor(v){ const h=pickHex(v); return h?(LEGACY_COLORS[h.toLowerCase()]||h):null; }
   function normalizeTypes(arr){
     const src=Array.isArray(arr)?arr:[],out=[],seen={};
-    BUILTIN_TYPES.forEach(t=>{ const m=src.filter(x=>x&&x.id===t.id)[0]; out.push({id:t.id,name:(m&&m.name)||t.name,color:normColor(m&&m.color)||t.color,builtin:true}); seen[t.id]=1; });
+    const dead={}; (S.deletedBuiltins||[]).forEach(id=>{dead[id]=1;});
+    BUILTIN_TYPES.forEach(t=>{ if(dead[t.id]){seen[t.id]=1;return;} const m=src.filter(x=>x&&x.id===t.id)[0]; out.push({id:t.id,name:(m&&m.name)||t.name,color:normColor(m&&m.color)||t.color,builtin:true}); seen[t.id]=1; });
     src.forEach(x=>{ if(!x||!x.id||seen[x.id])return; seen[x.id]=1; out.push({id:String(x.id),name:String(x.name||x.id).slice(0,8),color:normColor(x.color)||DEFAULT_TYPE_COLOR,builtin:false}); });
+    if(!out.length)out.push({id:'type0',name:'类型',color:DEFAULT_TYPE_COLOR,builtin:false});
     return out;
   }
   S.types=normalizeTypes(null);
@@ -322,7 +324,7 @@
   function renderTabs(){ tabsEl.innerHTML=''; S.docs.forEach((d,i)=>{ const t=document.createElement('div'); t.className='tab'+(i===S.active?' active':''); t.innerHTML='<span class="tname">'+esc(d.name)+'</span>'+(d.dirty?'<span class="tdot" title="未保存">●</span>':'')+'<span class="tclose" data-i="'+i+'">×</span>'; t.addEventListener('click',e=>{ if(e.target.classList.contains('tclose')){ if(d.dirty&&!confirm('「'+d.name+'」有未保存的修改，仍要关闭？'))return; closeDoc(+e.target.dataset.i);} else if(e.target.classList.contains('tname')&&e.target.contentEditable!=='true'){ S.active=i;S.selection=null;renderTabs();renderAll();renderLib();scheduleSave(); } }); t.querySelector('.tname').addEventListener('click',e=>{e.stopPropagation();inlineRename(e.target,d);}); tabsEl.appendChild(t); }); }
   function serialize(d){ return JSON.stringify({version:2,name:d.name,nodes:d.nodes,edges:d.edges},null,2); }
   function loadJson(txt,handle,name){ const d=JSON.parse(txt); const nd={id:Date.now()+'',name:name||d.name||('大纲'+(S.docs.length+1)),handle:handle||null,dirty:false,nodes:(d.nodes||[]).map(normalizeNode),edges:d.edges||[],undoStack:[],redoStack:[]}; S.docs.push(nd);S.active=S.docs.length-1;S.selection=null; const ids=nd.nodes.map(n=>parseInt(String(n.id).replace(/\D/g,'')||'0')).concat(nd.edges.map(e=>parseInt(String(e.id).replace(/\D/g,'')||'0'))); S.seq=Math.max(S.seq,...ids,0)+1; renderTabs();renderAll();renderLib(); scheduleSave(); }
-  function normalizeNode(n){ return {title:n.title||'',text:n.text||'',img:n.img||'',collapsed:!!n.collapsed,w:n.w||S.defW,h:n.h||S.defH,type:(n.type&&n.type!=='image')?n.type:'event',id:n.id,x:n.x||0,y:n.y||0}; }
+  function normalizeNode(n){ return {title:n.title||'',text:n.text||'',img:n.img||'',collapsed:!!n.collapsed,w:n.w||S.defW,h:n.h||S.defH,type:(n.type&&n.type!=='image'&&typeDef(n.type))?n.type:fallbackType(),id:n.id,x:n.x||0,y:n.y||0}; }
 
   /* ---------- 自动保存：Origin Private File System（无需选文件，改动即存，刷新不丢） ---------- */
   const OPFS_FILE='huabu-workspace.json';
@@ -336,15 +338,16 @@
     docs:S.docs.map(d=>({id:d.id,name:d.name,nodes:d.nodes,edges:d.edges})),
     extra:S.extra, active:S.active, seq:S.seq, zoom:S.zoom, panX:S.panX, panY:S.panY,
     onlyLogic:S.onlyLogic, undirectedMode:S.undirectedMode, defW:S.defW, defH:S.defH,
-    showSidebar:S.showSidebar, libTab:S.libTab, libSearch:S.libSearch, snapOn:S.snapOn, gridSnap:S.gridSnap, connectMode:S.connectMode },null,2); }
+    showSidebar:S.showSidebar, libTab:S.libTab, libSearch:S.libSearch, snapOn:S.snapOn, gridSnap:S.gridSnap, connectMode:S.connectMode, deletedBuiltins:S.deletedBuiltins||[] },null,2); }
 
   function restoreWorkspace(data){ if(!data||!data.docs||!data.docs.length)return false;
+    S.deletedBuiltins=Array.isArray(data.deletedBuiltins)?data.deletedBuiltins.filter(x=>typeof x==='string'):[];
     S.types=normalizeTypes(data.types);
     S.docs=data.docs.map(x=>({id:x.id||Date.now()+'',name:x.name||'大纲',handle:null,dirty:false,nodes:(x.nodes||[]).map(normalizeNode),edges:x.edges||[],undoStack:[],redoStack:[]}));
     S.extra=(data.extra||[]).slice();
     S.active=Math.min(Math.max(0,data.active|0),S.docs.length-1);
     S.seq=data.seq||1; S.zoom=data.zoom||1; S.panX=data.panX||0; S.panY=data.panY||0;
-    S.onlyLogic=!!data.onlyLogic; S.undirectedMode=!!data.undirectedMode; S.snapOn=data.snapOn!==false; S.gridSnap=data.gridSnap!==false; S.connectMode=!!data.connectMode;
+    S.onlyLogic=!!data.onlyLogic&&!!typeDef('logic'); S.undirectedMode=!!data.undirectedMode; S.snapOn=data.snapOn!==false; S.gridSnap=data.gridSnap!==false; S.connectMode=!!data.connectMode;
     S.defW=data.defW||160; S.defH=data.defH||90;
     S.showSidebar=data.showSidebar!==false; S.libTab=typeDef(data.libTab)?data.libTab:firstTypeId(); S.libSearch=data.libSearch||'';
     S.selection=null; S.selectedEdge=null; cancelEdgeClick();
@@ -400,7 +403,7 @@
     S.types.forEach(t=>{
       const el=document.createElement('div');
       el.className='lib-tab'+(t.id===S.libTab?' sel':'');
-      el.dataset.tab=t.id; el.style.setProperty('--tc',t.color); el.textContent=t.name; el.title=t.name+'（右键改名/改色）';
+      el.dataset.tab=t.id; el.style.setProperty('--tc',t.color); el.textContent=t.name; el.title=t.name+'（右键改名/改色/删除）';
       libTabsEl.appendChild(el);
     });
   }
@@ -409,7 +412,7 @@
     S.types.forEach(t=>{
       const el=document.createElement('div');
       el.className='add-item'; el.dataset.add=t.id; el.style.background=t.color;
-      el.textContent=t.name; el.title='拖出或点击新建「'+t.name+'」（右键改名/改色）';
+      el.textContent=t.name; el.title='拖出或点击新建「'+t.name+'」（右键改名/改色/删除）';
       addLegend.appendChild(el);
     });
     const add=document.createElement('div');
@@ -448,7 +451,9 @@
     document.getElementById('tp-hex').value=typePickColor;
     document.getElementById('tp-hex').classList.remove('bad');
     document.getElementById('tp-prev').style.background=typePickColor;
-    document.getElementById('tp-del').style.visibility=(t&&!t.builtin)?'visible':'hidden';
+    const delBtn=document.getElementById('tp-del');
+    delBtn.style.visibility=t?'visible':'hidden';
+    delBtn.style.opacity=(t&&S.types.length>1)?'1':'.35';
     renderSwatches();
     typePop.style.display='flex';
     const r=(anchorEl||addLegend).getBoundingClientRect();
@@ -472,14 +477,16 @@
   }
   function deleteType(){
     const t=typeEditId?typeDef(typeEditId):null;
-    if(!t||t.builtin){flashHint('内置类型不可删除');return;}
+    if(!t){flashHint('没有可删除的类型');return;}
     const fallback=S.types.filter(x=>x.id!==t.id)[0];
     if(!fallback){flashHint('至少保留一个类型');return;}
     if(!confirm('删除类型「'+t.name+'」？该类型的卡片会改为「'+fallback.name+'」'))return;
     S.docs.forEach(d=>d.nodes.forEach(n=>{ if(n.type===t.id)n.type=fallback.id; }));
     S.extra.forEach(x=>{ if(x.type===t.id)x.type=fallback.id; });
     S.types=S.types.filter(x=>x.id!==t.id);
+    if(t.builtin){ if(!Array.isArray(S.deletedBuiltins))S.deletedBuiltins=[]; if(S.deletedBuiltins.indexOf(t.id)<0)S.deletedBuiltins.push(t.id); }
     if(S.libTab===t.id)S.libTab=fallback.id;
+    if(t.id==='logic'&&S.onlyLogic){ S.onlyLogic=false; document.getElementById('only-logic').classList.remove('active'); }
     closeTypePop(); renderTypeUI(); renderAll(); markDirty(); scheduleSave();
     flashHint('已删除类型「'+t.name+'」');
   }
@@ -520,7 +527,7 @@
   addLegend.addEventListener('click',e=>{ if(e.target.closest&&e.target.closest('#add-type')){openTypeEditor(null,document.getElementById('add-type'));return;} const b=e.target.closest&&e.target.closest('.add-item[data-add]'); if(!b)return; if(!moved)addNode(b.dataset.add); else moved=false; });
   addLegend.addEventListener('contextmenu',e=>{ const b=e.target.closest&&e.target.closest('.add-item[data-add]'); if(!b)return; e.preventDefault(); openTypeEditor(b.dataset.add,b); });
   function startGhostBtn(e,type){ ghostType=type;moved=false;ghostPayload=null;ghost.style.display='block';ghost.style.background=typeColor(type);ghost.textContent=typeName(type);ghost.style.left=e.clientX+'px';ghost.style.top=e.clientY+'px';ghost._type=type;e.preventDefault(); }
-  document.getElementById('only-logic').onclick=function(){S.onlyLogic=!S.onlyLogic;this.classList.toggle('active',S.onlyLogic);renderAll();scheduleSave();};
+  document.getElementById('only-logic').onclick=function(){if(!S.onlyLogic&&!typeDef('logic')){flashHint('当前没有「逻辑」类型');return;}S.onlyLogic=!S.onlyLogic;this.classList.toggle('active',S.onlyLogic);renderAll();scheduleSave();};
   document.getElementById('undirected').onclick=function(){S.undirectedMode=!S.undirectedMode;this.classList.toggle('on',S.undirectedMode);this.innerHTML=iconSvg(S.undirectedMode?'biline':'arrow');scheduleSave();};
   document.getElementById('tidy-layout').onclick=function(){const b=this;if(b.classList.contains('on'))return;b.classList.add('on');setTimeout(()=>{try{tidyLayout();}catch(err){console.error(err);flashHint('整理布局失败：'+err.message);}finally{b.classList.remove('on');}},150);};
   document.getElementById('snap-toggle').onclick=function(){S.snapOn=!S.snapOn;this.classList.toggle('on',S.snapOn);flashHint(S.snapOn?'已开启智能吸附':'已关闭智能吸附（自由摆放）');scheduleSave();};
@@ -853,7 +860,7 @@ function refreshTapers(){ taperCache.forEach(t=>{ t.el.setAttribute('d',taperD(t
   /* 导出 */
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   function flashHint(t){hint.textContent=t;}
-  function logicOnly(){return{nodes:nodes().filter(n=>n.type==='logic'),edges:edges().filter(e=>byId(e.from)?.type==='logic'&&byId(e.to)?.type==='logic')};}
+  function logicOnly(){const id=typeDef('logic')?'logic':firstTypeId();return{nodes:nodes().filter(n=>n.type===id),edges:edges().filter(e=>byId(e.from)?.type===id&&byId(e.to)?.type===id)};}
   function numId(id){ return parseInt(String(id).replace(/\D/g,''))||0; }
   function exportChain(fmt){const o=logicOnly();if(fmt==='md'){
     const ns=o.nodes.slice().sort((a,b)=>numId(a.id)-numId(b.id));
