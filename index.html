@@ -627,6 +627,7 @@
   function trashCardEntries(q){
     return Object.keys(S.cardTrash).map(k=>({key:k,c:S.cardTrash[k]}))
       .filter(x=>!q||(String(x.c.title||'')+' '+String(x.c.text||'')).toLowerCase().includes(q))
+      .filter(x=>nodeInstanceCount(x.key)===0)
       .sort((a,b)=>(b.c.delT||0)-(a.c.delT||0)||String(a.c.title||'').localeCompare(String(b.c.title||''),'zh'));
   }
   function trashCardRow(x){
@@ -670,6 +671,18 @@
       libBody.appendChild(sec);
       types.forEach(t=>libBody.appendChild(trashTypeRow(t)));
     }
+  }
+  /* 最后一个实例消失 → 卡片定义随实例一起进入被删除库；恢复时再放回 S.extra */
+  function retireCardIfLastInstance(n){
+    if(!n)return false;
+    const k=cardKey(n);
+    if(nodeInstanceCount(k)>0)return false;
+    S.extra=S.extra.filter(x=>cardKey(x)!==k);
+    const rec={type:normTypeId(n.type),title:n.title||'',text:n.text||'',img:n.img||'',w:n.w,h:n.h,delT:Date.now()};
+    const nk=cardKey(rec);
+    if(nk!==k)delete S.cardTrash[k];
+    S.cardTrash[nk]=rec;
+    return true;
   }
   function restoreCard(key){
     const c=S.cardTrash[key]; if(!c)return false;
@@ -754,7 +767,8 @@
   function imgKey(s){ return s?(s.length+':'+s.slice(-32)):''; }
   function cardKey(c){ return (c.title||'')+'|'+(c.text||'')+'|'+(c.type||'')+'|'+imgKey(c.img); }
   function allComponents(){ const arr=[]; S.docs.forEach(d=>d.nodes.forEach(n=>arr.push({id:n.id,type:n.type,title:n.title,text:n.text,img:n.img||'',w:n.w,h:n.h,_doc:d.id}))); S.extra.forEach(x=>arr.push({id:x.id,type:x.type,title:x.title,text:x.text,img:x.img||'',w:x.w,h:x.h,_extra:true})); const seen={},out=[]; arr.forEach(c=>{const k=cardKey(c);if(!seen[k]){seen[k]=1;out.push(c);}}); return out; }
-  function cardInstanceCount(c){ const k=cardKey(c); return allComponents().filter(x=>cardKey(x)===k).length; }
+  function nodeInstanceCount(k){ let c=0; S.docs.forEach(d=>d.nodes.forEach(n=>{ if(cardKey(n)===k)c++; })); return c; }
+  function cardInstanceCount(c){ return nodeInstanceCount(cardKey(c)); }
   function mixWhite(hex,amt){ const h=String(hex||'#888').replace('#',''); const s=h.length===3?h.split('').map(ch=>ch+ch).join(''):h.slice(0,6); const r=parseInt(s.slice(0,2),16),g=parseInt(s.slice(2,4),16),b=parseInt(s.slice(4,6),16); if([r,g,b].some(v=>isNaN(v)))return 'rgba(255,255,255,.72)'; const f=v=>Math.round(v+(255-v)*(amt==null?0.78:amt)); return 'rgb('+f(r)+','+f(g)+','+f(b)+')'; }
   function compSize(c){ const w=+c.w||0,h=+c.h||0; return {w:Math.max(80,w||S.defW),h:Math.max(44,h||S.defH)}; }
   function compNode(c,x,y){ return {id:'n'+S.seq,type:normTypeId(c.type),title:c.title||'',text:c.text||'',img:c.img||'',collapsed:false,x,y,w:compSize(c).w,h:compSize(c).h}; }
@@ -789,7 +803,8 @@
     const tid=S.libTab;
     const hit=c=>!q||(c.title||'').toLowerCase().includes(q)||(c.text||'').toLowerCase().includes(q);
     const live=allComponents().filter(c=>c.type===tid&&hit(c)).sort((a,b)=>(a.title||'').localeCompare(b.title||'','zh'));
-    const dead=Object.keys(S.cardTrash).map(k=>({key:k,c:S.cardTrash[k]})).filter(x=>x.c.type===tid&&hit(x.c)).sort((a,b)=>(a.c.title||'').localeCompare(b.c.title||'','zh'));
+    const liveKeys={}; live.forEach(c=>liveKeys[cardKey(c)]=1);
+    const dead=Object.keys(S.cardTrash).map(k=>({key:k,c:S.cardTrash[k]})).filter(x=>x.c.type===tid&&hit(x.c)&&!liveKeys[x.key]).sort((a,b)=>(a.c.title||'').localeCompare(b.c.title||'','zh'));
     if(!live.length&&!dead.length){ libBody.innerHTML='<div style="color:#999;font-size:13px;padding:10px;text-align:center">无匹配组件</div>'; return; }
     live.forEach(c=>libBody.appendChild(libCardEl(c,false,cardKey(c))));
     dead.forEach(x=>libBody.appendChild(libCardEl(x.c,true,x.key)));
@@ -806,7 +821,7 @@
     return n?{kind:'node',obj:n,doc:d}:null;
   }
   function closeCompPop(){ const p=document.getElementById('comp-pop'); if(p)p.style.display='none'; compEdit=null; }
-  function historyFor(d){ if(!d)return; if(d===doc()){pushHistory();return;} d.undoStack.push(JSON.stringify({nodes:d.nodes,edges:d.edges})); if(d.undoStack.length>100)d.undoStack.shift(); d.redoStack=[]; d.dirty=true; }
+  function historyFor(d){ if(!d)return; if(d===doc()){pushHistory();return;} d.undoStack.push(snapshotFor(d)); if(d.undoStack.length>100)d.undoStack.shift(); d.redoStack=[]; d.dirty=true; }
   function renderCompTypes(sel){
     compType=sel;
     const box=document.getElementById('cp-types'); if(!box)return; box.innerHTML='';
@@ -857,14 +872,14 @@
       d.nodes.forEach(x=>{ if(cardKey(x)===key){ set[x.id]=1; hit++; } });
       if(!hit)return;
       if(d===doc())pushHistory();
-      else { d.undoStack.push(JSON.stringify({nodes:d.nodes,edges:d.edges})); if(d.undoStack.length>100)d.undoStack.shift(); d.redoStack=[]; }
+      else { d.undoStack.push(snapshotFor(d)); if(d.undoStack.length>100)d.undoStack.shift(); d.redoStack=[]; }
       d.nodes=d.nodes.filter(x=>!set[x.id]);
       d.edges=d.edges.filter(e=>!set[e.from]&&!set[e.to]);
       d.dirty=true;
       if(d===doc()){ if(S.selection&&set[S.selection])S.selection=null; if(S.selectedEdge&&!d.edges.some(e=>e.id===S.selectedEdge))S.selectedEdge=null; }
     });
     S.extra=S.extra.filter(x=>cardKey(x)!==key);
-    if(!S.cardTrash[key])S.cardTrash[key]=snap;
+    S.cardTrash[key]=snap;
     renderAll(); renderTypeUI(); renderTabs(); scheduleSave(); closeCompPop(); flashHint('「'+label+'」已移入被删除库');
   }
   /* 卡片类型切换：node.type 字段的 Update 路径 */
@@ -893,10 +908,12 @@
   document.getElementById('cp-text').addEventListener('keydown',e=>{ if(e.key==='Escape'){e.preventDefault();closeCompPop();} });
 
   /* 历史 */
-  function snapshot(){ return JSON.stringify({nodes:doc().nodes,edges:doc().edges}); }
+  function snapshotFor(d){ return JSON.stringify({nodes:d.nodes,edges:d.edges,extra:S.extra,cardTrash:S.cardTrash}); }
+  function snapshot(){ return snapshotFor(doc()); }
+  function applySnapshot(s){ const d=doc(); d.nodes=s.nodes;d.edges=s.edges; if(Array.isArray(s.extra))S.extra=s.extra; if(s.cardTrash&&typeof s.cardTrash==='object'&&!Array.isArray(s.cardTrash))S.cardTrash=s.cardTrash; }
   function pushHistory(){ doc().undoStack.push(snapshot()); if(doc().undoStack.length>100)doc().undoStack.shift(); doc().redoStack=[]; markDirty(); }
-  function undo(){ const d=doc(); if(!d.undoStack.length)return; d.redoStack.push(snapshot()); const s=JSON.parse(d.undoStack.pop()); d.nodes=s.nodes;d.edges=s.edges; markDirty(); renderAll();flashHint('撤销'); }
-  function redo(){ const d=doc(); if(!d.redoStack.length)return; d.undoStack.push(snapshot()); const s=JSON.parse(d.redoStack.pop()); d.nodes=s.nodes;d.edges=s.edges; markDirty(); renderAll();flashHint('重做'); }
+  function undo(){ const d=doc(); if(!d.undoStack.length)return; d.redoStack.push(snapshot()); const s=JSON.parse(d.undoStack.pop()); applySnapshot(s); markDirty(); renderAll();renderTypeUI();flashHint('撤销'); }
+  function redo(){ const d=doc(); if(!d.redoStack.length)return; d.undoStack.push(snapshot()); const s=JSON.parse(d.redoStack.pop()); applySnapshot(s); markDirty(); renderAll();renderTypeUI();flashHint('重做'); }
   document.getElementById('undo').onclick=undo; document.getElementById('redo').onclick=redo;
   window.addEventListener('keydown',e=>{ const ctrl=e.ctrlKey||e.metaKey; if(ctrl && e.key.toLowerCase()==='s'){e.preventDefault();saveFile();return;} if(e.target&&(e.target.contentEditable==='true'||e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT'))return;
     if(ctrl && e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();}
@@ -928,7 +945,7 @@
   floatInput.querySelector('#float-ok').onclick=()=>{if(floatInput._cb)floatInput._cb(floatText.value);floatInput.style.display='none';}; floatInput.querySelector('#float-cancel').onclick=()=>{floatInput.style.display='none';};
 
   /* 节点 */
-  function addNode(type,x,y){ pushHistory(); if(x==null)x=(viewport.clientWidth/2-S.panX)/S.zoom+40; if(y==null)y=(viewport.clientHeight/2-S.panY)/S.zoom; if(S.gridSnap){x=snapV(x);y=snapV(y);} type=normTypeId(type); const n={id:'n'+S.seq,type,x,y,w:S.defW,h:S.defH,title:'',text:'',img:'',collapsed:false}; S.seq++;nodes().push(n);placeAvoidOverlap(n);renderAll();renderLib();scheduleSave();return n; }
+  function addNode(type,x,y){ pushHistory(); if(x==null)x=(viewport.clientWidth/2-S.panX)/S.zoom+40; if(y==null)y=(viewport.clientHeight/2-S.panY)/S.zoom; if(S.gridSnap){x=snapV(x);y=snapV(y);} type=normTypeId(type); const n={id:'n'+S.seq,type,x,y,w:S.defW,h:S.defH,title:'',text:'',img:'',collapsed:false}; S.seq++;nodes().push(n);delete S.cardTrash[cardKey(n)];placeAvoidOverlap(n);renderAll();renderLib();scheduleSave();return n; }
   function addAtCursor(type){ if(lastMouseX!=null){ const p=clientToWorld(lastMouseX,lastMouseY); addNode(type,p.x-S.defW/2,p.y-8); } else addNode(type); }
   /* ---------- 图片：内嵌 data URL，随文档一起持久化 ---------- */
   const imageInput=document.getElementById('image-file');
@@ -994,7 +1011,7 @@
     const pos=p||cursorWorld();
     pushHistory();
     const n=compNode(nodeClip,pos.x,pos.y);
-    S.seq++; nodes().push(n); placeAvoidOverlap(n); setSelection(n.id); renderAll(); renderLib(); flashHint('已粘贴');
+    S.seq++; nodes().push(n); delete S.cardTrash[cardKey(n)]; placeAvoidOverlap(n); setSelection(n.id); renderAll(); renderTypeUI(); flashHint('已粘贴');
     return n;
   }
   document.addEventListener('paste',e=>{
@@ -1014,7 +1031,7 @@
   function renderAll(){refreshTypeUsage();renderNodes();renderEdges();}
   function setSelection(id){S.selection=id;document.querySelectorAll('.node').forEach(el=>el.classList.toggle('selected',el.dataset.id===id));}
   function renderNodes(){ nodesEl.innerHTML=''; nodes().forEach(n=>{ if(S.onlyLogic&&n.type!=='logic')return; const el=document.createElement('div');el.className='node'+(n.collapsed?' collapsed':'')+(S.selection===n.id?' selected':'')+(S.connectMode&&n.id===linkFirst?' link-src':'');el.dataset.id=n.id;el.dataset.type=n.type;el.style.background=typeColor(n.type);el.style.borderColor=typeColor(n.type);el.style.left=n.x+'px';el.style.top=n.y+'px';el.style.width=n.w+'px'; const tb=document.createElement('div');tb.className='titlebar';tb.innerHTML='<span class="grip">⠿</span><span class="fold">'+(n.collapsed?'▸':'▾')+'</span>'; const ti=document.createElement('span');ti.className='ntitle';ti.contentEditable='true';ti.spellcheck=false;ti.textContent=n.title||'';tb.appendChild(ti); const tg=document.createElement('span');tg.className='tagbtn';tg.title='切换卡片类型';tg.innerHTML=iconSvg('tag');tg.addEventListener('pointerdown',e=>e.stopPropagation());tg.addEventListener('click',e=>{e.stopPropagation();openTypePicker(n,tg);});tb.appendChild(tg); const ib=document.createElement('span');ib.className='imgbtn';ib.title=n.img?'替换图片':'添加图片';ib.innerHTML=iconSvg('image');ib.addEventListener('pointerdown',e=>e.stopPropagation());ib.addEventListener('click',e=>{e.stopPropagation();pickImage(n);});tb.appendChild(ib); const bo=document.createElement('div');bo.className='nbody';bo.contentEditable='true';bo.spellcheck=false;bo.textContent=n.text||''; const rz=document.createElement('div');rz.className='resize';rz.title='调大小'; let imgw=null; if(n.img){ imgw=document.createElement('div');imgw.className='nimgwrap'; const im=document.createElement('img');im.alt='';im.draggable=false;im.src=n.img;im.addEventListener('load',()=>{ if(n.img===im.getAttribute('src')){ if(!n.collapsed)n.h=el.offsetHeight||n.h; renderEdges(); } }); imgw.appendChild(im); const imdel=document.createElement('span');imdel.className='imgdel';imdel.title='移除图片';imdel.innerHTML=iconSvg('trash');imdel.addEventListener('pointerdown',e=>{e.stopPropagation();});imdel.addEventListener('click',e=>{e.stopPropagation();e.preventDefault();removeNodeImage(n);});imgw.appendChild(imdel); imgw.addEventListener('click',e=>{e.stopPropagation();pickImage(n);}); } el.addEventListener('dragover',e=>{ if(dragMayBeImage(e.dataTransfer)){e.preventDefault();e.stopPropagation();el.classList.add('dragover');} }); el.addEventListener('dragleave',e=>{ if(!el.contains(e.relatedTarget))el.classList.remove('dragover'); }); el.addEventListener('drop',e=>{ if(!dragHasImage(e.dataTransfer))return; e.preventDefault();e.stopPropagation();el.classList.remove('dragover');applyImagePayload(e.dataTransfer,n,e.clientX,e.clientY); }); el.appendChild(tb);if(imgw)el.appendChild(imgw);el.appendChild(bo);el.appendChild(rz);nodesEl.appendChild(el); if(!n.collapsed)n.h=el.offsetHeight||n.h; n.w=el.offsetWidth||n.w; ['top','right','bottom','left'].forEach(p=>{const port=document.createElement('span');port.className='port p-'+p;port.dataset.port=p;port.addEventListener('pointerdown',e=>{e.stopPropagation();startConnect(e,n,p);});port.addEventListener('pointerup',e=>{e.stopPropagation();endConnectOnPort(e,n,p);});el.appendChild(port);}); ti.addEventListener('input',()=>{n.title=ti.innerText.replace(/\u00a0/g,' ').trim()===''?'':ti.innerText;markDirty();renderLib();}); bo.addEventListener('input',()=>{n.text=bo.innerText.replace(/\u00a0/g,' ').trim()===''?'':bo.innerText;if(!n.collapsed)n.h=el.offsetHeight||n.h;markDirty();renderLib();renderEdges();}); el.addEventListener('pointerdown',e=>{if(e.button===0)setSelection(n.id);}); tb.querySelector('.grip').addEventListener('pointerdown',e=>onNodeDown(e,n,el)); tb.querySelector('.fold').addEventListener('click',e=>{e.stopPropagation();n.collapsed=!n.collapsed;markDirty();renderAll();}); rz.addEventListener('pointerdown',e=>onResizeDown(e,n,el)); el.addEventListener('dblclick',e=>{if(S.connectMode)return;if(e.target.closest('.port')||e.target.closest('.resize')||e.target.closest('.nimgwrap')||e.target.closest('.imgbtn')||e.target.closest('.tagbtn'))return;deleteNode(n.id);}); }); }
-  function deleteNode(id){ const n=nodes().find(x=>x.id===id); pushHistory(); doc().nodes=nodes().filter(x=>x.id!==id); doc().edges=edges().filter(e=>e.from!==id&&e.to!==id); if(S.selection===id)S.selection=null; if(n){ const k=cardKey(n); if(!S.cardTrash[k]&&!allComponents().some(x=>cardKey(x)===k))S.cardTrash[k]={type:normTypeId(n.type),title:n.title||'',text:n.text||'',img:n.img||'',w:n.w,h:n.h,delT:Date.now()}; } renderAll();renderTypeUI();scheduleSave(); }
+  function deleteNode(id){ const n=nodes().find(x=>x.id===id); pushHistory(); doc().nodes=nodes().filter(x=>x.id!==id); doc().edges=edges().filter(e=>e.from!==id&&e.to!==id); if(S.selection===id)S.selection=null; retireCardIfLastInstance(n); renderAll();renderTypeUI();scheduleSave(); }
   function onNodeDown(e,n,el){ if(e.button!==0)return; moved=false; setSelection(n.id); el.classList.add('dragging'); drag={kind:'node',id:n.id,sx:e.clientX,sy:e.clientY,ox:n.x,oy:n.y,_p:false}; e.preventDefault(); }
   function onResizeDown(e,n,el){ if(e.button!==0)return; setSelection(n.id); drag={kind:'resize',id:n.id,sx:e.clientX,sy:e.clientY,ow:n.w,oh:n.h,_p:true}; pushHistory(); e.preventDefault(); e.stopPropagation(); }
   viewport.addEventListener('pointerdown',e=>{ if(e.target===viewport||e.target===world||e.target===gridSvg){moved=false;drag={kind:'pan',sx:e.clientX,sy:e.clientY,ox:S.panX,oy:S.panY};e.preventDefault();if(S.connectMode&&linkFirst){linkFirst=null;refreshLinkSrc();flashHint('已取消选择，仍在连线模式');}} });
@@ -1037,7 +1054,7 @@
     if(!typing&&S.selectedEdge&&(e.key==='Enter'||e.key==='F2')){const ed=edges().find(x=>x.id===S.selectedEdge);if(ed)editEdgeLabel(ed);e.preventDefault();}
   });
   window.addEventListener('pointermove',e=>{ lastMouseX=e.clientX;lastMouseY=e.clientY; if(ghostType||ghostPayload){if(ghost._sx==null){ghost._sx=e.clientX;ghost._sy=e.clientY;}if(Math.abs(e.clientX-ghost._sx)+Math.abs(e.clientY-ghost._sy)>3)moved=true;ghost.style.left=e.clientX+'px';ghost.style.top=e.clientY+'px';} if(connecting){updateTempLine(clientToWorld(e.clientX,e.clientY));} if(edgeDrag){const nid=edgeDrag.side==='from'?edgeDrag.edge.from:edgeDrag.edge.to;setSelection(nid);return;} if(!drag)return; const dx=e.clientX-drag.sx,dy=e.clientY-drag.sy; if(Math.abs(dx)+Math.abs(dy)>3)moved=true; if(!moved)return; if(drag.kind==='node'){if(!drag._p){pushHistory();drag._p=true;}const n=byId(drag.id);const rawX=drag.ox+dx/S.zoom,rawY=drag.oy+dy/S.zoom;n.x=rawX;n.y=rawY;let smarted=false;if(S.snapOn){const sn=snapAlign(n);const eq=snapEqualGap(n);smarted=Math.abs(n.x-rawX)>0.01||Math.abs(n.y-rawY)>0.01;renderGuides(n,sn,eq);}if(!smarted){if(S.snapOn)clearGuides();if(S.gridSnap){n.x=snapV(rawX);n.y=snapV(rawY);}}const el=nodeEl(n.id);if(el){el.style.left=n.x+'px';el.style.top=n.y+'px';}renderEdges();} else if(drag.kind==='resize'){const n=byId(drag.id);let nw=Math.max(80,drag.ow+dx/S.zoom),nh=Math.max(40,drag.oh+dy/S.zoom);if(S.gridSnap){nw=snapV(nw);nh=snapV(nh);}n.w=nw;n.h=nh;const el=nodeEl(n.id);if(el){el.style.width=n.w+'px';if(!n.collapsed)el.style.height=n.h+'px';}renderEdges();} else if(drag.kind==='pan'){S.panX=drag.ox+dx;S.panY=drag.oy+dy;applyTransform();} });
-  window.addEventListener('pointerup',e=>{ if(ghostType){const type=ghost._type;ghostType=null;ghost.style.display='none';if(moved){const p=clientToWorld(e.clientX,e.clientY);addNode(type,p.x-S.defW/2,p.y-8);}ghost._sx=null;} if(ghostPayload){const c=ghost._c;ghostPayload=null;ghost.style.display='none';if(moved){const p=clientToWorld(e.clientX,e.clientY);const sz=compSize(c);let nx=p.x-sz.w/2,ny=p.y-16;if(S.gridSnap){nx=snapV(nx);ny=snapV(ny);}pushHistory();const n=compNode(c,nx,ny);S.seq++;nodes().push(n);placeAvoidOverlap(n);renderAll();renderLib();}ghost._sx=null;} if(drag&&(drag.kind==='node'||drag.kind==='resize')){const el=nodeEl(drag.id);if(el)el.classList.remove('dragging');} clearGuides(); if(drag&&drag.kind==='node'&&moved){evenOutChain(byId(drag.id));renderAll();} drag=null; });
+  window.addEventListener('pointerup',e=>{ if(ghostType){const type=ghost._type;ghostType=null;ghost.style.display='none';if(moved){const p=clientToWorld(e.clientX,e.clientY);addNode(type,p.x-S.defW/2,p.y-8);}ghost._sx=null;} if(ghostPayload){const c=ghost._c;ghostPayload=null;ghost.style.display='none';if(moved){const p=clientToWorld(e.clientX,e.clientY);const sz=compSize(c);let nx=p.x-sz.w/2,ny=p.y-16;if(S.gridSnap){nx=snapV(nx);ny=snapV(ny);}pushHistory();const n=compNode(c,nx,ny);S.seq++;nodes().push(n);delete S.cardTrash[cardKey(n)];placeAvoidOverlap(n);renderAll();renderTypeUI();}ghost._sx=null;} if(drag&&(drag.kind==='node'||drag.kind==='resize')){const el=nodeEl(drag.id);if(el)el.classList.remove('dragging');} clearGuides(); if(drag&&drag.kind==='node'&&moved){evenOutChain(byId(drag.id));renderAll();} drag=null; });
 
   /* 连线 */
   function clientToWorld(cx,cy){const r=viewport.getBoundingClientRect();return{x:(cx-r.left-S.panX)/S.zoom,y:(cy-r.top-S.panY)/S.zoom};}
