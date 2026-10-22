@@ -312,7 +312,7 @@
 
 <script>
 (function(){
-  const S={docs:[],active:0,seq:1,zoom:1,panX:0,panY:0,onlyLogic:false,undirectedMode:false,selection:null,selectedEdge:null,defW:160,defH:90,extra:[],libSearch:'',showSidebar:true,libTab:'',deletedBuiltins:[],snapOn:true,gridSnap:true,connectMode:false,lastGc:'',cardTrash:{}};
+  const S={docs:[],active:0,seq:1,zoom:1,panX:0,panY:0,onlyLogic:false,undirectedMode:false,selection:null,selectedEdge:null,defW:160,defH:90,libSearch:'',showSidebar:true,libTab:'',deletedBuiltins:[],snapOn:true,gridSnap:true,connectMode:false,lastGc:'',cardTrash:{}};
   const BUILTIN_TYPES=[{id:'logic',name:'逻辑',color:'#2E4A7D',builtin:true},{id:'event',name:'事件',color:'#2F6B5A',builtin:true},{id:'theory',name:'理论',color:'#9C4B2F',builtin:true}];
   const UNCAT='uncat', UNCAT_COLOR='#7C8089', TRASH='__trash__';
   const TYPE_COLORS=['#2E4A7D','#2F6B5A','#9C4B2F','#5B4B8A','#8A6D1F','#1F6F8B','#A03E56','#3A4A5A','#6B4C3A','#4B6B2F','#2B5F6B','#7A3B5E'];
@@ -351,12 +351,12 @@
   function normTypeId(id){ const t=typeDef(id); return (t&&!t.trashed)?t.id:UNCAT; }
   function currentType(){ const t=typeDef(S.libTab); return (t&&!t.trashed)?S.libTab:UNCAT; }
   function navTypes(){ return liveTypes().filter(t=>t.id!==UNCAT||S.libTab===UNCAT||allComponents().some(c=>c.type===UNCAT)||Object.keys(S.cardTrash).some(k=>S.cardTrash[k].type===UNCAT)); }
-  function typeInstanceCount(id){ let c=0; S.docs.forEach(d=>{ d.nodes.forEach(n=>{ if(n.type===id)c++; }); }); S.extra.forEach(x=>{ if(x.type===id)c++; }); return c; }
+  function typeInstanceCount(id){ let c=0; S.docs.forEach(d=>{ d.nodes.forEach(n=>{ if(n.type===id)c++; }); }); return c; }
   function typeHasEdge(id){ let hit=false; S.docs.forEach(d=>{ const ids={}; d.nodes.forEach(n=>{ if(n.type===id)ids[n.id]=1; }); d.edges.forEach(e=>{ if(ids[e.from]||ids[e.to])hit=true; }); }); return hit; }
   function refreshTypeUsage(){
     const live={};
     S.docs.forEach(d=>d.nodes.forEach(n=>{live[n.type]=1;}));
-    S.extra.forEach(x=>{live[x.type]=1;});
+    Object.keys(S.cardTrash).forEach(k=>{live[S.cardTrash[k].type]=1;});
     S.types.forEach(t=>{ if(live[t.id])t.used=true; });
   }
   function doc(){return S.docs[S.active];} function nodes(){return doc().nodes;} function edges(){return doc().edges;}
@@ -423,7 +423,7 @@
   function serializeWorkspace(){ return JSON.stringify({version:3,
     types:S.types,
     docs:S.docs.map(d=>({id:d.id,name:d.name,nodes:d.nodes,edges:d.edges})),
-    extra:S.extra, cardTrash:S.cardTrash, active:S.active, seq:S.seq, zoom:S.zoom, panX:S.panX, panY:S.panY,
+    cardTrash:S.cardTrash, active:S.active, seq:S.seq, zoom:S.zoom, panX:S.panX, panY:S.panY,
     onlyLogic:S.onlyLogic, undirectedMode:S.undirectedMode, defW:S.defW, defH:S.defH,
     showSidebar:S.showSidebar, libTab:S.libTab, libSearch:S.libSearch, snapOn:S.snapOn, gridSnap:S.gridSnap, connectMode:S.connectMode, deletedBuiltins:S.deletedBuiltins||[], lastGc:S.lastGc||'' },null,2); }
 
@@ -431,8 +431,20 @@
     S.deletedBuiltins=Array.isArray(data.deletedBuiltins)?data.deletedBuiltins.filter(x=>typeof x==='string'):[];
     S.types=normalizeTypes(data.types);
     S.docs=data.docs.map(x=>({id:x.id||Date.now()+'',name:x.name||'大纲',handle:null,dirty:false,nodes:(x.nodes||[]).map(normalizeNode),edges:x.edges||[],undoStack:[],redoStack:[]}));
-    S.extra=(data.extra||[]).slice();
-    S.cardTrash=(data.cardTrash&&typeof data.cardTrash==='object'&&!Array.isArray(data.cardTrash))?data.cardTrash:{};
+    S.cardTrash=(data.cardTrash&&typeof data.cardTrash==='object'&&!Array.isArray(data.cardTrash))?Object.assign({},data.cardTrash):{};
+    /* 旧版 data.extra（无实例卡片数组）并入同一张卡表：它就是“活着但还没有实例”的卡 */
+    if(Array.isArray(data.extra))data.extra.forEach(x=>{
+      const c={type:normTypeId(x.type),title:x.title||'',text:x.text||'',img:x.img||'',w:x.w,h:x.h,deleted:false,delT:0};
+      const k=cardKey(c); if(!S.cardTrash[k])S.cardTrash[k]=c;
+    });
+    /* 同一张卡只有两种形态：有实例（记录不需要存在）或没实例（留一条记录）；属性类型必须收敛 */
+    Object.keys(S.cardTrash).forEach(k=>{
+      const c=S.cardTrash[k]; if(!c)return;
+      c.type=normTypeId(c.type); c.deleted=c.deleted===false?false:true;
+      const nk=cardKey(c);
+      if(nk!==k){ delete S.cardTrash[k]; if(!S.cardTrash[nk])S.cardTrash[nk]=c; else if(S.cardTrash[nk].deleted&&!c.deleted)S.cardTrash[nk]=c; }
+    });
+    Object.keys(S.cardTrash).forEach(k=>{ if(S.cardTrash[k]&&nodeInstanceCount(k)>0)delete S.cardTrash[k]; });
     S.active=Math.min(Math.max(0,data.active|0),S.docs.length-1);
     S.seq=data.seq||1; S.zoom=data.zoom||1; S.panX=data.panX||0; S.panY=data.panY||0;
     S.onlyLogic=!!data.onlyLogic&&!!typeDef('logic'); S.undirectedMode=!!data.undirectedMode; S.snapOn=data.snapOn!==false; S.gridSnap=data.gridSnap!==false; S.connectMode=!!data.connectMode;
@@ -471,7 +483,7 @@
   function showLoading(on){ const el=document.getElementById('loading'); if(el)el.style.display=on?'flex':'none'; }
 
   function downloadJSON(msg){ const d=doc(); const b=new Blob([serialize(d)],{type:'application/json'}); const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=d.name+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);markSaved(d);flashHint(msg||('已导出 '+d.name+'.json')); }
-  function clearDoc(){ if(!confirm('清空当前画布？'))return; pushHistory(); doc().nodes=[];doc().edges=[];S.selection=null;renderAll();renderLib();scheduleSave(); }
+  function clearDoc(){ if(!confirm('清空当前画布？'))return; pushHistory(); const gone=doc().nodes.slice(); doc().nodes=[];doc().edges=[];const seen={};gone.forEach(n=>{const k=cardKey(n);if(seen[k])return;seen[k]=1;retireCardIfLastInstance(n);});S.selection=null;renderAll();renderTypeUI();scheduleSave(); }
   document.getElementById('new-doc').onclick=()=>newDoc(); document.getElementById('open-doc').onclick=openFile; document.getElementById('save-doc').onclick=saveFile; document.getElementById('saveas-doc').onclick=saveAs; document.getElementById('export-json').onclick=()=>downloadJSON('已导出数据('+doc().name+'.json)'); document.getElementById('clear-doc').onclick=clearDoc;
   document.getElementById('import-file').onchange=e=>{ const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{loadJson(r.result,null,f.name);}catch(err){flashHint('导入失败');}};r.readAsText(f);e.target.value=''; };
 
@@ -483,7 +495,7 @@
   document.getElementById('prompt-parse').onclick=()=>{parseMd(document.getElementById('prompt-text').value);renderLib();promptbox.style.display='none';};
   function promptText(){ const names=S.types.map(t=>t.name); return '# 组件库\n# 请按下面的格式，把田野材料拆成组件；## 行写类型（当前类型：'+names.join(' / ')+'）；每行一条 "- 标题：内容"\n\n## '+names[0]+'\n- 群聚的物理基础：居住、生活、工作同在一条街\n\n## '+(names[1]||names[0])+'\n- 小巴车清晨把人接走：车窗蒙黑纸，朝各方向散出\n\n## '+(names[2]||names[0])+'\n- 莫斯的礼物：礼物牵出回礼的义务，回报有路径\n'; }
   function openPrompt(){ document.getElementById('prompt-text').value=promptText(); promptbox.style.display='flex'; }
-  function parseMd(txt){ let cur=null,n=0; txt.split(/\r?\n/).forEach(line=>{ const h=line.match(/^##\s*(.+?)\s*$/); if(h){ const label=h[1]; const hit=S.types.filter(t=>t.name===label||t.id===label.toLowerCase())[0]; cur=hit?hit.id:null; return; } const m=line.match(/^[-*]\s*(.+)$/); if(m&&cur){ const v=m[1]; const i1=v.indexOf('：'),i2=v.indexOf(':'); const sep=i1>=0?i1:i2; if(sep>=0){S.extra.push({id:'x'+(++n)+Date.now(),type:cur,title:v.slice(0,sep).trim(),text:v.slice(sep+1).trim()});}else{S.extra.push({id:'x'+(++n)+Date.now(),type:cur,title:v.trim(),text:''});} } }); flashHint('已导入 '+n+' 个组件'); scheduleSave(); }
+  function parseMd(txt){ let cur=null,n=0; const put=(title,text)=>{ const c={type:normTypeId(cur),title:title,text:text,img:'',deleted:false,delT:0}; const k=cardKey(c); if(!S.cardTrash[k])S.cardTrash[k]=c; n++; }; txt.split(/\r?\n/).forEach(line=>{ const h=line.match(/^##\s*(.+?)\s*$/); if(h){ const label=h[1]; const hit=S.types.filter(t=>t.name===label||t.id===label.toLowerCase())[0]; cur=hit?hit.id:null; return; } const m=line.match(/^[-*]\s*(.+)$/); if(m&&cur){ const v=m[1]; const i1=v.indexOf('：'),i2=v.indexOf(':'); const sep=i1>=0?i1:i2; if(sep>=0){put(v.slice(0,sep).trim(),v.slice(sep+1).trim());}else{put(v.trim(),'');} } }); flashHint('已导入 '+n+' 个组件'); scheduleSave(); }
 
   /* ---------- 卡片类型：图例 + 组件库页签 同源渲染 ---------- */
   let typeEditId=null,typePickColor=TYPE_COLORS[0];
@@ -498,7 +510,7 @@
     const tr=document.createElement('div');
     tr.className='lib-tab wide'+(S.libTab===TRASH?' sel':'');
     tr.dataset.tab=TRASH; tr.style.setProperty('--tc','#7C8089');
-    const n=trashTypeList().length+Object.keys(S.cardTrash).length;
+    const n=trashTypeList().length+Object.keys(S.cardTrash).filter(k=>S.cardTrash[k]&&S.cardTrash[k].deleted).length;
     tr.innerHTML=iconSvg('trash')+'<span>被删除库</span>'+(n?'<span class="cnt">'+n+'</span>':'');
     tr.title='被删除库：单击恢复，双击彻底删除';
     trashTabsEl.appendChild(tr);
@@ -563,7 +575,6 @@
   function renameInstances(typeId,oldName,newName){
     if(!oldName||oldName===newName)return;
     S.docs.forEach(d=>{ d.nodes.forEach(n=>{ if(n.type===typeId&&n.title===oldName)n.title=newName; }); });
-    S.extra.forEach(x=>{ if(x.type===typeId&&x.title===oldName)x.title=newName; });
     Object.keys(S.cardTrash).forEach(k=>{
       const c=S.cardTrash[k]; if(!c||c.type!==typeId||c.title!==oldName)return;
       delete S.cardTrash[k]; c.title=newName;
@@ -599,7 +610,6 @@
     const n=typeInstanceCount(t.id);
     if(n>0){
       S.docs.forEach(d=>{ d.nodes.forEach(x=>{ if(x.type===t.id)x.type=UNCAT; }); });
-      S.extra.forEach(x=>{ if(x.type===t.id)x.type=UNCAT; });
       S.docs.forEach(d=>{ d.undoStack=[]; d.redoStack=[]; });
     }
     t.trashed=true; t.delT=Date.now();
@@ -626,6 +636,7 @@
   }
   function trashCardEntries(q){
     return Object.keys(S.cardTrash).map(k=>({key:k,c:S.cardTrash[k]}))
+      .filter(x=>x.c&&x.c.deleted)
       .filter(x=>!q||(String(x.c.title||'')+' '+String(x.c.text||'')).toLowerCase().includes(q))
       .filter(x=>nodeInstanceCount(x.key)===0)
       .sort((a,b)=>(b.c.delT||0)-(a.c.delT||0)||String(a.c.title||'').localeCompare(String(b.c.title||''),'zh'));
@@ -680,28 +691,27 @@
     if(!n)return false;
     const k=cardKey(n);
     if(nodeInstanceCount(k)>0)return false;
-    S.extra=S.extra.filter(x=>cardKey(x)!==k);
-    const rec={type:normTypeId(n.type),title:n.title||'',text:n.text||'',img:n.img||'',w:n.w,h:n.h,delT:Date.now()};
+    const rec={type:normTypeId(n.type),title:n.title||'',text:n.text||'',img:n.img||'',w:n.w,h:n.h,deleted:true,delT:Date.now()};
     const nk=cardKey(rec);
     if(nk!==k)delete S.cardTrash[k];
     S.cardTrash[nk]=rec;
     return true;
   }
+  /* 恢复 = 把它从被删除库里拿出来，回到“活着但暂时没有实例”的普通状态；不造任何特殊结构 */
   function restoreCard(key){
     const c=S.cardTrash[key]; if(!c)return false;
-    reviveKey(key);
+    delete S.cardTrash[key];
     const t=typeDef(c.type);
-    const tid=(t&&!t.trashed)?t.id:UNCAT;
-    const base={title:c.title||'',text:c.text||'',type:tid,img:c.img||''};
-    if(!nodeInstanceCount(cardKey(base))){
-      const same=S.extra.find(x=>(x.title||'')===base.title&&(x.text||'')===base.text&&(x.img||'')===base.img);
-      if(same){ same.type=tid; if(c.w)same.w=c.w; if(c.h)same.h=c.h; }
-      else S.extra.push({id:'x'+(S.seq++),type:tid,title:base.title,text:base.text,img:base.img,w:c.w,h:c.h});
-    }
+    c.type=(t&&!t.trashed)?t.id:UNCAT;
+    c.deleted=false; c.delT=0;
+    const nk=cardKey(c);
+    if(nodeInstanceCount(nk)>0)delete S.cardTrash[nk];
+    else { const prev=S.cardTrash[nk]; if(prev&&prev!==c){ prev.w=c.w||prev.w; prev.h=c.h||prev.h; prev.deleted=false; prev.delT=0; } else S.cardTrash[nk]=c; }
     renderTypeUI(); renderAll(); markDirty(); scheduleSave();
-    flashHint('已恢复「'+(c.title||'(无标题)')+'」');
+    flashHint('已恢复「'+(c.title||'(无标题)')+'」到「'+typeName(c.type)+'」，单击即可新建实例');
     return true;
   }
+  /* 彻底删除 = 连卡片定义一起消失，画布上同名实例也一并清理 */
   function purgeCard(key){
     const c=S.cardTrash[key]; if(!c)return false;
     S.docs.forEach(d=>{
@@ -713,7 +723,6 @@
       d.undoStack=[]; d.redoStack=[]; d.dirty=true;
       if(d===doc()){ if(S.selection&&set[S.selection])S.selection=null; if(S.selectedEdge&&!d.edges.some(e=>e.id===S.selectedEdge))S.selectedEdge=null; }
     });
-    S.extra=S.extra.filter(x=>cardKey(x)!==key);
     delete S.cardTrash[key];
     renderTypeUI(); renderAll(); markDirty(); scheduleSave();
     flashHint('已彻底删除「'+(c.title||'(无标题)')+'」');
@@ -741,7 +750,6 @@
         d.undoStack=[]; d.redoStack=[];
         if(d===doc()){ if(S.selection&&!alive[S.selection])S.selection=null; if(S.selectedEdge&&!d.edges.some(e=>e.id===S.selectedEdge))S.selectedEdge=null; }
       });
-      S.extra=S.extra.filter(x=>!set[x.type]);
     }
     S.types=S.types.filter(t=>!set[t.id]);
     Object.keys(S.cardTrash).forEach(k=>{ if(set[S.cardTrash[k].type])delete S.cardTrash[k]; });
@@ -772,7 +780,7 @@
   /* 组件库视图 */
   function imgKey(s){ return s?(s.length+':'+s.slice(-32)):''; }
   function cardKey(c){ return (c.title||'')+'|'+(c.text||'')+'|'+(c.type||'')+'|'+imgKey(c.img); }
-  function allComponents(){ const arr=[]; S.docs.forEach(d=>d.nodes.forEach(n=>arr.push({id:n.id,type:n.type,title:n.title,text:n.text,img:n.img||'',w:n.w,h:n.h,_doc:d.id}))); S.extra.forEach(x=>arr.push({id:x.id,type:x.type,title:x.title,text:x.text,img:x.img||'',w:x.w,h:x.h,_extra:true})); const seen={},out=[]; arr.forEach(c=>{const k=cardKey(c);if(!seen[k]){seen[k]=1;out.push(c);}}); return out; }
+  function allComponents(){ const arr=[]; S.docs.forEach(d=>d.nodes.forEach(n=>arr.push({id:n.id,type:n.type,title:n.title,text:n.text,img:n.img||'',w:n.w,h:n.h,_doc:d.id}))); const seen={},out=[]; arr.forEach(c=>{const k=cardKey(c);if(!seen[k]){seen[k]=1;out.push(c);}}); return out; }
   function nodeInstanceCount(k){ let c=0; S.docs.forEach(d=>d.nodes.forEach(n=>{ if(cardKey(n)===k)c++; })); return c; }
   function cardInstanceCount(c){ return nodeInstanceCount(cardKey(c)); }
   function mixWhite(hex,amt){ const h=String(hex||'#888').replace('#',''); const s=h.length===3?h.split('').map(ch=>ch+ch).join(''):h.slice(0,6); const r=parseInt(s.slice(0,2),16),g=parseInt(s.slice(2,4),16),b=parseInt(s.slice(4,6),16); if([r,g,b].some(v=>isNaN(v)))return 'rgba(255,255,255,.72)'; const f=v=>Math.round(v+(255-v)*(amt==null?0.78:amt)); return 'rgb('+f(r)+','+f(g)+','+f(b)+')'; }
@@ -808,20 +816,29 @@
     if(S.libTab===TRASH){ renderTrashTab(q); return; }
     const tid=S.libTab;
     const hit=c=>!q||(c.title||'').toLowerCase().includes(q)||(c.text||'').toLowerCase().includes(q);
-    const live=allComponents().filter(c=>c.type===tid&&hit(c)).sort((a,b)=>(a.title||'').localeCompare(b.title||'','zh'));
+    const live=allComponents().filter(c=>c.type===tid&&hit(c));
     const liveKeys={}; live.forEach(c=>liveKeys[cardKey(c)]=1);
-    const dead=Object.keys(S.cardTrash).map(k=>({key:k,c:S.cardTrash[k]})).filter(x=>x.c.type===tid&&hit(x.c)&&!liveKeys[x.key]).sort((a,b)=>(a.c.title||'').localeCompare(b.c.title||'','zh'));
+    /* 零实例但还活着的卡：照样住在自己的属性里，和普通卡一样单击新建实例 */
+    Object.keys(S.cardTrash).forEach(k=>{
+      const c=S.cardTrash[k];
+      if(!c||c.deleted||c.type!==tid||liveKeys[k]||!hit(c))return;
+      liveKeys[k]=1;
+      live.push(Object.assign({},c,{_rec:k}));
+    });
+    live.sort((a,b)=>(a.title||'').localeCompare(b.title||'','zh'));
+    /* 只有已进被删除库的卡才浅色渲染 */
+    const dead=Object.keys(S.cardTrash).map(k=>({key:k,c:S.cardTrash[k]})).filter(x=>x.c&&x.c.deleted&&x.c.type===tid&&hit(x.c)&&!liveKeys[x.key]).sort((a,b)=>(a.c.title||'').localeCompare(b.c.title||'','zh'));
     if(!live.length&&!dead.length){ libBody.innerHTML='<div style="color:#999;font-size:13px;padding:10px;text-align:center">无匹配组件</div>'; return; }
-    live.forEach(c=>libBody.appendChild(libCardEl(c,false,cardKey(c))));
+    live.forEach(c=>libBody.appendChild(libCardEl(c,false,c._rec||cardKey(c))));
     dead.forEach(x=>libBody.appendChild(libCardEl(x.c,true,x.key)));
   }
   function addNodeFromComponent(c){ pushHistory(); const sz=compSize(c); let nx=(viewport.clientWidth/2-S.panX)/S.zoom-sz.w/2,ny=(viewport.clientHeight/2-S.panY)/S.zoom-sz.h/2; if(S.gridSnap){nx=snapV(nx);ny=snapV(ny);} const n=compNode(c,nx,ny); S.seq++; nodes().push(n); reviveKey(cardKey(c)); placeAvoidOverlap(n); renderAll(); renderLib(); scheduleSave(); }
   function startLibGhost(e,c){ ghostPayload=c; moved=false; ghost.style.display='block'; ghost.style.background=typeColor(c.type); ghost.textContent=c.title||typeName(c.type); ghost.style.left=e.clientX+'px'; ghost.style.top=e.clientY+'px'; ghost._c=c; e.preventDefault(); }
-  /* 组件条目的 CRUD：条目要么来自画布卡片，要么来自 md 导入（S.extra） */
+  /* 组件条目的 CRUD：条目要么来自画布实例，要么来自卡片表里“暂时没有实例”的卡 */
   let compEdit=null,compType='';
   function compResolve(c){
     if(!c)return null;
-    if(c._extra){ const x=S.extra.find(v=>v.id===c.id); return x?{kind:'extra',obj:x}:null; }
+    if(c._rec){ const r=S.cardTrash[c._rec]; return r?{kind:'rec',obj:r,key:c._rec}:null; }
     const d=S.docs.find(v=>v.id===c._doc); if(!d)return null;
     const n=d.nodes.find(v=>v.id===c.id);
     return n?{kind:'node',obj:n,doc:d}:null;
@@ -860,19 +877,25 @@
     const text=document.getElementById('cp-text').value;
     const type=normTypeId(compType||ref.obj.type);
     if(ref.kind==='node')historyFor(ref.doc);
+    const oldKey=ref.kind==='rec'?ref.key:null;
     ref.obj.title=title; ref.obj.text=text; ref.obj.type=type;
     if(ref.kind==='node'){ ref.doc.dirty=true; }
+    else if(ref.kind==='rec'){
+      delete S.cardTrash[oldKey];
+      ref.obj.deleted=false; ref.obj.delT=0;
+      S.cardTrash[cardKey(ref.obj)]=ref.obj;
+    }
     renderAll(); renderTypeUI(); renderTabs(); scheduleSave(); closeCompPop(); flashHint('已更新「'+(title||'组件')+'」');
   }
   function deleteComp(c,quiet){
     const ref=c?compResolve(c):(compEdit&&compEdit.ref); if(!ref)return;
-    const obj=ref.obj, label=obj.title||'(无标题)', key=cardKey(obj);
+    const obj=ref.obj, label=obj.title||'(无标题)', key=ref.kind==='rec'?ref.key:cardKey(obj);
     const n=cardInstanceCount(obj);
     if(!quiet){
       const msg=n>1?('删除卡片「'+label+'」？它的 '+n+' 个实例及连线都会删除，卡片会进入被删除库'):('删除卡片「'+label+'」？画布上的实例及连线会一并删除，卡片会进入被删除库');
       if(!confirm(msg))return;
     }
-    const snap={type:obj.type,title:obj.title||'',text:obj.text||'',img:obj.img||'',w:obj.w,h:obj.h,delT:Date.now()};
+    const snap={type:normTypeId(obj.type),title:obj.title||'',text:obj.text||'',img:obj.img||'',w:obj.w,h:obj.h,deleted:true,delT:Date.now()};
     S.docs.forEach(d=>{
       const set={}; let hit=0;
       d.nodes.forEach(x=>{ if(cardKey(x)===key){ set[x.id]=1; hit++; } });
@@ -884,7 +907,6 @@
       d.dirty=true;
       if(d===doc()){ if(S.selection&&set[S.selection])S.selection=null; if(S.selectedEdge&&!d.edges.some(e=>e.id===S.selectedEdge))S.selectedEdge=null; }
     });
-    S.extra=S.extra.filter(x=>cardKey(x)!==key);
     S.cardTrash[key]=snap;
     renderAll(); renderTypeUI(); renderTabs(); scheduleSave(); closeCompPop(); flashHint('「'+label+'」已移入被删除库');
   }
@@ -914,9 +936,9 @@
   document.getElementById('cp-text').addEventListener('keydown',e=>{ if(e.key==='Escape'){e.preventDefault();closeCompPop();} });
 
   /* 历史 */
-  function snapshotFor(d){ return JSON.stringify({nodes:d.nodes,edges:d.edges,extra:S.extra,cardTrash:S.cardTrash}); }
+  function snapshotFor(d){ return JSON.stringify({nodes:d.nodes,edges:d.edges,cardTrash:S.cardTrash}); }
   function snapshot(){ return snapshotFor(doc()); }
-  function applySnapshot(s){ const d=doc(); d.nodes=s.nodes;d.edges=s.edges; if(Array.isArray(s.extra))S.extra=s.extra; if(s.cardTrash&&typeof s.cardTrash==='object'&&!Array.isArray(s.cardTrash))S.cardTrash=s.cardTrash; }
+  function applySnapshot(s){ const d=doc(); d.nodes=s.nodes;d.edges=s.edges; if(s.cardTrash&&typeof s.cardTrash==='object'&&!Array.isArray(s.cardTrash))S.cardTrash=s.cardTrash; }
   function pushHistory(){ doc().undoStack.push(snapshot()); if(doc().undoStack.length>100)doc().undoStack.shift(); doc().redoStack=[]; markDirty(); }
   function undo(){ const d=doc(); if(!d.undoStack.length)return; d.redoStack.push(snapshot()); const s=JSON.parse(d.undoStack.pop()); applySnapshot(s); markDirty(); renderAll();renderTypeUI();flashHint('撤销'); }
   function redo(){ const d=doc(); if(!d.redoStack.length)return; d.undoStack.push(snapshot()); const s=JSON.parse(d.redoStack.pop()); applySnapshot(s); markDirty(); renderAll();renderTypeUI();flashHint('重做'); }
