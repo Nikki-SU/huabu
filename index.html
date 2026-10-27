@@ -51,6 +51,8 @@
   .btn:hover{background:#f0f0f4;}
   .btn.active{background:#111;color:#fff;border-color:#111;}
   .btn.on{background:#1b1b1f;color:#fff;border-color:#1b1b1f;}
+  .btn.attn{animation:attnPulse 1.7s ease-in-out infinite;}
+  @keyframes attnPulse{0%,100%{box-shadow:0 0 0 0 rgba(58,90,140,0)}50%{box-shadow:0 0 0 4px rgba(58,90,140,.25)}}
   .btn svg{width:19px;height:19px;}
   .btn[data-group="file"]:not(.active):not(.on){color:#3A5A8C;}
   .btn[data-group="edit"]:not(.active):not(.on){color:#6B5B95;}
@@ -436,7 +438,34 @@
   function loadJson(txt,handle,name){ const d=JSON.parse(txt); const nd={id:Date.now()+'',name:name||d.name||('大纲'+(S.docs.length+1)),handle:handle||null,dirty:false,nodes:(d.nodes||[]).map(normalizeNode),edges:d.edges||[],undoStack:[],redoStack:[]}; if(d.cards&&typeof d.cards==='object'&&!Array.isArray(d.cards))Object.keys(d.cards).forEach(k=>{ const c=d.cards[k]; if(!c)return; const rec=newCard(c,c.auto); const nk=cardKey(rec); if(!S.cardTrash[nk])S.cardTrash[nk]=rec; }); nd.nodes.forEach(n=>{ if(!S.cardTrash[cardKey(n)])ensureCard(n); }); Object.keys(S.cardTrash).forEach(k=>{ const c=S.cardTrash[k]; if(c&&c.parent&&!S.cardTrash[c.parent])c.parent=''; }); S.docs.push(nd);S.active=S.docs.length-1;S.selection=null; const ids=nd.nodes.map(n=>parseInt(String(n.id).replace(/\D/g,'')||'0')).concat(nd.edges.map(e=>parseInt(String(e.id).replace(/\D/g,'')||'0'))); S.seq=Math.max(S.seq,...ids,0)+1; renderTabs();renderAll();renderLib(); scheduleSave(); }
   function normalizeNode(n){ const ov={}; if(n&&n.ov&&typeof n.ov==='object'){ if(n.ov.text)ov.text=1; if(n.ov.img)ov.img=1; } return {title:n.title||'',text:n.text||'',img:n.img||'',collapsed:!!n.collapsed,w:n.w||S.defW,h:n.h||S.defH,type:(n.type&&n.type!=='image')?normTypeId(n.type):fallbackType(),id:n.id,x:n.x||0,y:n.y||0,parent:(typeof n.parent==='string'?n.parent:''),prov:(typeof n.prov==='string'?n.prov:''),ov}; }
 
-  /* ---------- 自动保存：Origin Private File System（无需选文件，改动即存，刷新不丢） ---------- */
+  /* ---------- 主存储：用户自己选的磁盘文件（File System Access API），句柄存 IndexedDB ---------- */
+  const IDB_NAME='huabu-file', IDB_STORE='handle', IDB_KEY='workspace';
+  let fileHandle=null, needReconnect=false, reconnecting=false;
+  function idbOpen(){ return new Promise((res,rej)=>{ try{ const r=indexedDB.open(IDB_NAME,1); r.onupgradeneeded=()=>{ const db=r.result; if(!db.objectStoreNames.contains(IDB_STORE))db.createObjectStore(IDB_STORE); }; r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }catch(e){ rej(e); } }); }
+  async function idbPut(v){ const db=await idbOpen(); return await new Promise((res,rej)=>{ const tx=db.transaction(IDB_STORE,'readwrite'); tx.objectStore(IDB_STORE).put(v,IDB_KEY); tx.oncomplete=()=>res(true); tx.onerror=()=>rej(tx.error); }); }
+  async function idbTake(){ try{ const db=await idbOpen(); return await new Promise((res,rej)=>{ const tx=db.transaction(IDB_STORE,'readonly'); const q=tx.objectStore(IDB_STORE).get(IDB_KEY); q.onsuccess=()=>res(q.result||null); q.onerror=()=>rej(q.error); }); }catch(e){ return null; } }
+  function permState(h){ try{ return h.queryPermission({mode:'readwrite'}).catch(()=>'prompt'); }catch(e){ return Promise.resolve('prompt'); } }
+  function fileLabel(h){ return h&&h.name?h.name:'未绑定文件'; }
+  function setFileBadge(){ const o=document.getElementById('open-doc'), s=document.getElementById('save-doc');
+    if(o){ o.classList.toggle('attn',needReconnect); o.title=fileHandle?('已绑定：'+fileLabel(fileHandle)+(needReconnect?'（待重新连接，点此拉取）':' · 自动保存到该文件')):'打开磁盘上的工作区文件'; }
+    if(s){ s.classList.toggle('attn',!fileHandle&&hasFSA()); s.title=fileHandle?('已绑定：'+fileLabel(fileHandle)+' · 自动保存到该文件'):'选择保存路径（下次打开自动拉取）'; } }
+  async function bindHandle(h){ fileHandle=h; needReconnect=false; try{ await idbPut(h); }catch(e){} setFileBadge(); }
+  async function reconnect(){ if(!fileHandle||reconnecting)return false; reconnecting=true; try{
+      const p=await permState(fileHandle); const granted=p==='granted'?true:await ensurePerm(fileHandle);
+      if(!granted){ needReconnect=true; setFileBadge(); flashHint('未获文件权限，先停在临时副本'); return false; }
+      needReconnect=false; setFileBadge();
+      let txt=null; try{ const f=await fileHandle.getFile(); txt=await f.text(); }catch(e){ txt=null; }
+      if(txt===null){ needReconnect=true; setFileBadge(); flashHint('读取 '+fileLabel(fileHandle)+' 失败，文件可能被移动或删除'); return false; }
+      if(txt){ try{ const data=JSON.parse(txt); if(data&&(data.version===3||data.version===4)&&Array.isArray(data.docs)){ restoreWorkspace(data); return true; } }catch(e){} }
+      return false;
+    } finally { reconnecting=false; } }
+  function armReconnect(){ const once=async()=>{ document.removeEventListener('pointerdown',once,true); if(!needReconnect)return; if(await reconnect()){ flashHint('已重新拉取 '+fileLabel(fileHandle)); try{ runMonthlyGc(); }catch(e){} } }; document.addEventListener('pointerdown',once,true); }
+  let firstBindArmed=false;
+  function armFirstBind(){ if(firstBindArmed||fileHandle||!hasFSA())return; firstBindArmed=true;
+    const once=async(ev)=>{ document.removeEventListener('pointerdown',once,true); if(fileHandle)return; if(ev&&ev.target&&ev.target.closest&&ev.target.closest('#toolbar'))return; if(reconnecting)return; if(S.docs.some(d=>d.nodes.length))return; try{ await saveAs(); }catch(e){} };
+    document.addEventListener('pointerdown',once,true); }
+
+  /* ---------- 兜底副本：Origin Private File System（未绑定文件 / 权限失效时用） ---------- */
   const OPFS_FILE='huabu-workspace.json';
   let saveTimer=null, saving=false, pendingSave=false;
   function opfsSupported(){ return !!(navigator.storage&&navigator.storage.getDirectory); }
@@ -511,17 +540,24 @@
 
   function markSavedAll(){ S.docs.forEach(d=>d.dirty=false); renderTabs(); }
   function scheduleSave(){ if(saveTimer)return; saveTimer=setTimeout(function(){saveTimer=null;autoSave();},600); }
-  async function autoSave(){ if(!opfsSupported())return; if(saving){ pendingSave=true; return; } saving=true; try{ if(await opfsWrite(serializeWorkspace()))markSavedAll(); }catch(e){} saving=false; if(pendingSave){ pendingSave=false; autoSave(); } }
+  async function autoSave(){ if(saving){ pendingSave=true; return; } saving=true;
+    try{ const txt=serializeWorkspace(); let wrote=false, backed=false;
+      if(fileHandle){ try{ if((await permState(fileHandle))==='granted'){ await writeFile(fileHandle,txt); wrote=true; } }catch(e){ needReconnect=true; setFileBadge(); } }
+      if(opfsSupported()){ try{ backed=await opfsWrite(txt); }catch(e){ backed=false; } }
+      if(wrote||backed)markSavedAll();
+    }catch(e){}
+    saving=false; if(pendingSave){ pendingSave=false; autoSave(); } }
   function flushSave(){ if(saveTimer){clearTimeout(saveTimer);saveTimer=null;} autoSave(); flashHint('已自动保存'); }
 
   function hasFSA(){ return !!(window.showOpenFilePicker&&window.showSaveFilePicker); }
   async function ensurePerm(h){ try{ if((await h.queryPermission({mode:'readwrite'}))==='granted')return true; return (await h.requestPermission({mode:'readwrite'}))==='granted'; }catch(e){ return true; } }
   async function writeFile(h,t){ const w=await h.createWritable();await w.write(t);await w.close(); }
 
-  async function openFile(){ if(!hasFSA()){flashHint('当前浏览器不支持文件访问，改用选择文件导入');document.getElementById('import-file').click();return;} showLoading(true); try{ const [h]=await window.showOpenFilePicker({multiple:false,types:[{description:'田野大纲工作区',accept:{'application/json':['.json']}}]}); await readWorkspaceFrom(h); }catch(e){ if(e&&e.name!=='AbortError')flashHint('打开失败'); } showLoading(false); }
-  async function readWorkspaceFrom(h){ const f=await h.getFile(); const t=await f.text(); const data=JSON.parse(t); if(data&&(data.version===3||data.version===4)&&Array.isArray(data.docs)){ restoreWorkspace(data); flashHint('已打开 '+f.name); } else { loadJson(t,null,f.name.replace(/\.json$/i,'')); flashHint('已打开单文档 '+f.name); } }
-  function saveFile(){ flushSave(); }
-  async function saveAs(){ if(!hasFSA()){ downloadJSON('当前浏览器不支持文件访问，已改为下载'); return; } try{ const h=await window.showSaveFilePicker({suggestedName:'huabu.json',types:[{description:'田野大纲工作区',accept:{'application/json':['.json']}}]}); await writeFile(h, serializeWorkspace()); flashHint('已另存为文件 '+h.name); }catch(e){ if(e&&e.name!=='AbortError')flashHint('另存失败'); } }
+  async function openFile(){ if(fileHandle&&needReconnect){ if(await reconnect()){ flashHint('已重新拉取 '+fileLabel(fileHandle)); return; } }
+    if(!hasFSA()){flashHint('当前浏览器不支持文件访问，改用选择文件导入');document.getElementById('import-file').click();return;} showLoading(true); try{ const [h]=await window.showOpenFilePicker({multiple:false,types:[{description:'田野大纲工作区',accept:{'application/json':['.json']}}]}); await ensurePerm(h); await bindHandle(h); await readWorkspaceFrom(h); }catch(e){ if(e&&e.name!=='AbortError')flashHint('打开失败'); } showLoading(false); }
+  async function readWorkspaceFrom(h){ const f=await h.getFile(); const t=await f.text(); const data=JSON.parse(t); if(data&&(data.version===3||data.version===4)&&Array.isArray(data.docs)){ restoreWorkspace(data); flashHint('已打开 '+f.name+' · 之后自动保存到这里'); } else { loadJson(t,null,f.name.replace(/\.json$/i,'')); flashHint('已打开单文档 '+f.name); } }
+  async function saveFile(){ if(!fileHandle){ saveAs(); return; } if(needReconnect||(await permState(fileHandle))!=='granted'){ if(!await reconnect()){ saveAs(); return; } } flushSave(); }
+  async function saveAs(){ if(!hasFSA()){ downloadJSON('当前浏览器不支持文件访问，已改为下载'); return; } try{ const h=await window.showSaveFilePicker({suggestedName:fileLabel(fileHandle)==='未绑定文件'?'huabu.json':fileLabel(fileHandle),types:[{description:'田野大纲工作区',accept:{'application/json':['.json']}}]}); await writeFile(h, serializeWorkspace()); await bindHandle(h); markSavedAll(); flashHint('已绑定 '+h.name+' · 之后自动保存到这里'); }catch(e){ if(e&&e.name!=='AbortError')flashHint('另存失败'); } }
   async function loadAutoSave(){ if(!opfsSupported())return false; const txt=await opfsRead(); if(!txt)return false; try{ const data=JSON.parse(txt); if(data&&(data.version===3||data.version===4)&&Array.isArray(data.docs)){ restoreWorkspace(data); return true; } }catch(e){} return false; }
   function showLoading(on){ const el=document.getElementById('loading'); if(el)el.style.display=on?'flex':'none'; }
 
@@ -1510,16 +1546,22 @@ function taperFill(ctx,p1,cp,p2,w0,w1,n){ const L=[],R=[]; for(let i=0;i<=n;i++)
   function roundRect(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
   function wrapText(ctx,text,x,y,maxW,lh){const arr=Array.from(text);let line='';for(const ch of arr){if(ctx.measureText(line+ch).width>maxW){ctx.fillText(line,x,y);y+=lh;line=ch;}else line+=ch;}if(line)ctx.fillText(line,x,y);}
 
-  /* 初始化 */
+  /* 初始化：先接回上次选定的磁盘文件并重新拉取，再回落 OPFS 副本 */
   showLoading(true);
   (async function(){
-    let ok=false;
-    try{ ok=await loadAutoSave(); }catch(e){ ok=false; }
+    let ok=false, recovered=false;
+    try{ const h=await idbTake(); if(h&&hasFSA()){ fileHandle=h; recovered=await reconnect(); } }catch(e){ recovered=false; }
+    ok=recovered;
+    if(!ok){ try{ ok=await loadAutoSave(); }catch(e){ ok=false; } }
+    setFileBadge();
     if(!ok){ newDoc('大纲1'); applyTransform(); addLegend.style.left='272px'; renderTypeUI(); }
     else { try{ runMonthlyGc(); }catch(e){} }
+    if(needReconnect)armReconnect(); else armFirstBind();
     showLoading(false);
-    flashHint(ok?'已重新拉取工作区文件':'浮动画板拖出节点 · ⠿移动 · ▾折叠 · 单击编辑 · 双击删除 · 端口连线 · 点线选中');
+    flashHint(!ok?'浮动画板拖出节点 · ⠿移动 · ▾折叠 · 单击编辑 · 双击删除 · 端口连线 · 点线选中'
+      :(recovered?('已重新拉取 '+fileLabel(fileHandle)):'已恢复临时副本 · 点保存图标选定路径，下次自动拉取'));
   })();
+  if(/[?&]debug=1/.test(location.search))window.__h={get fh(){return fileHandle;},set fh(v){fileHandle=v;},get nrc(){return needReconnect;},set nrc(v){needReconnect=v;},reconnect,idbPut,idbTake,setFileBadge,serializeWorkspace,restoreWorkspace,markSavedAll,autoSave,flushSave,saveFile,saveAs,openFile};
   window.addEventListener('resize',renderGrid);
   window.addEventListener('beforeunload',e=>{ if(S.docs.some(d=>d.dirty)){ e.preventDefault(); e.returnValue=''; return ''; } });
   window.addEventListener('pointerdown',e=>{ if(typePop.style.display!=='none'&&!e.target.closest('#type-pop')&&!e.target.closest('#add-type'))closeTypePop(); if(!e.target.closest('#comp-pop'))closeCompPop(); if(!e.target.closest('#type-picker')&&!e.target.closest('.tagbtn'))closeTypePicker(); if(!e.target.closest('#parent-picker')&&!e.target.closest('.parentbtn')){const pp=document.getElementById('parent-picker');if(pp)pp.style.display='none';} if(!e.target.closest('.node')&&!e.target.closest('.edge-hit')&&!e.target.closest('.edge-port')&&!e.target.closest('#sidebar')&&!e.target.closest('#toolbar')&&!e.target.closest('#add-legend')){if(S.selectedEdge){cancelEdgeClick();S.selectedEdge=null;renderEdges();}}});
